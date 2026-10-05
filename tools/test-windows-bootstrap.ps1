@@ -190,7 +190,11 @@ New-Fixture; $fixture.LaunchError = $true; Invoke-Fixture @{} 'Simulated launch 
 New-Fixture; $fixture.Transport.NetworkError = $true; Invoke-Fixture @{} 'Simulated network failure'
 New-Fixture; [void](Add-Response ([byte[]]::new(1048577))); Invoke-Fixture @{} 'byte limit'
 Assert-True ($fixture.Streams[0].TotalRead -eq 1048577) 'Metadata read did not stop at the byte cap'
-New-Fixture; [void](Add-Response ([Text.Encoding]::UTF8.GetBytes('{broken'))); Invoke-Fixture @{} 'JSON|Json|property'
+foreach ($invalidJson in @('{broken', '{"schema":')) {
+    New-Fixture; [void](Add-Response ([Text.Encoding]::UTF8.GetBytes($invalidJson)))
+    Invoke-Fixture @{} '^The official release manifest is not valid JSON\. Setup was not run\.$'
+    Assert-True ($fixture.Transport.Requested.Count -eq 1) 'Malformed metadata fetched the setup payload'
+}
 New-Fixture; [void](Add-Response ([byte[]]@(0xff))); Invoke-Fixture @{} 'translate|decode|Unable'
 
 # Transport matrix: absolute/relative redirects, host and scheme restrictions,

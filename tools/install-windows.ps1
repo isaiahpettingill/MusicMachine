@@ -178,7 +178,9 @@ function Invoke-MusicMachineInstall {
     $releaseRoot = "https://github.com/$repository/releases/"
     $manifestUrl = if ($Version -eq 'latest') { $releaseRoot + 'latest/download/release.json' }
         else { $releaseRoot + "download/v$Version/release.json" }
-    $manifest = ConvertFrom-Json -InputObject (Receive-MusicMachineRelease -Uri $manifestUrl -MaximumBytes 1048576 -TimeoutSeconds 60)
+    $manifestText = Receive-MusicMachineRelease -Uri $manifestUrl -MaximumBytes 1048576 -TimeoutSeconds 60
+    try { $manifest = ConvertFrom-Json -InputObject $manifestText }
+    catch { throw 'The official release manifest is not valid JSON. Setup was not run.' }
     if ($manifest.schema -ne 1 -or $manifest.product -ne 'MusicMachine' -or
         [string]$manifest.version -cnotmatch '^\d+\.\d+\.\d+$' -or [string]$manifest.commit -cnotmatch '^[0-9a-f]{40}$') {
         throw 'The official release manifest is invalid.'
