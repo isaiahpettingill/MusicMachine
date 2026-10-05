@@ -18,7 +18,7 @@ Native CI smoke-tests real WAV export on both operating systems. Windows CI inst
 
 ## Pages deployment
 
-`Deploy browser to Cloudflare Pages` accepts only a successful trusted `Build and release` run whose commit belongs to `main`. Automatic deployment skips superseded commits; pull-request artifacts never receive deployment credentials. The exact prepared browser artifact is deployed to the existing `musicmachine` Pages project or created under the already authorized account. No paid service or billing plan is configured.
+`Deploy browser to Cloudflare Pages` accepts only a successful trusted `Build and release` run whose commit belongs to `main`. Automatic deployment skips superseded commits; pull-request artifacts never receive deployment credentials. The exact prepared browser artifact is deployed to the existing `music-machine` Pages project or created under the already authorized account. No paid service or billing plan is configured.
 
 The app lives at `/`; `/download/` provides desktop installers and source. `/build.json` identifies the exact deployed version/commit. Files above Pages' 25 MiB limit are gzip-compressed and loaded with the browser's `DecompressionStream`, checking .NET's SHA-256 integrity value before execution. The complete browser ZIP is preserved separately.
 

@@ -77,3 +77,15 @@ test('missing Pages secrets skip deployment without exposing values', async t =>
   assert.match(build, /needs: \[prepare, desktop, browser\]/);
   assert.doesNotMatch(build, /CLOUDFLARE_API_TOKEN/);
 });
+
+
+test('deployment configuration uses the requested music-machine Pages project', async () => {
+  const config = JSON.parse(await readFile(new URL('../wrangler.jsonc', import.meta.url), 'utf8'));
+  assert.equal(config.name, 'music-machine');
+  const workflow = await readFile(new URL('../.github/workflows/pages.yml', import.meta.url), 'utf8');
+  assert.match(workflow, /--project-name music-machine /);
+  assert.match(workflow, /https:\/\/music-machine\.pages\.dev/);
+  assert.doesNotMatch(workflow, /https:\/\/musicmachine\.pages\.dev/);
+  const ensure = await readFile(new URL('./ensure-pages-project.mjs', import.meta.url), 'utf8');
+  assert.match(ensure, /name: 'music-machine'/);
+});
