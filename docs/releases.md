@@ -4,7 +4,7 @@ The pipeline follows [ComicEditor](https://github.com/isaiahpettingill/comic_edi
 
 ## Artifacts and installation
 
-Every successful `main` build allocates the next `0.1.x` release, beginning at `0.1.0`. Tags `vX.Y.Z` request an explicit version; pull requests and `build/**` validation branches build and test without publishing or deploying. Rerunning an already published commit will not overwrite its release. A partial upload stays draft until all Windows, Linux and browser artifacts pass checks.
+Every successful `main` build allocates the next `0.1.x` release, beginning at `0.1.0`. Tags `vX.Y.Z` on the current `main` commit request an explicit version; pull requests and `build/**` validation branches build and test without publishing or deploying. Rerunning an already published commit will not overwrite its release. A partial upload stays draft until all Windows, Linux and browser artifacts pass checks. New pushes cancel superseded runs in the same release group. The release job rechecks the current `main` SHA before uploading and before publishing, so an obsolete build cannot publish after a newer commit. Validation branches have separate concurrency groups.
 
 - `MusicMachine-win-x64-setup.exe`: current-user NSIS installer, Start menu shortcut and Windows uninstall entry. No administrator rights required. It bundles the unmodified official SDL2 2.32.10 x64 runtime after checking upstream's pinned SHA-256. Windows packages are not Authenticode-signed.
 - `MusicMachine-win-x64.zip`: portable equivalent, including SDL2, icons, docs, examples, licenses and `release.json`.
@@ -24,9 +24,9 @@ The app lives at `/`; `/download/` provides desktop installers and source. `/bui
 
 GitHub Actions needs these secrets in this repository or the `cloudflare-pages` environment:
 
-- `CLOUDFLARE_ACCOUNT_ID`
-- `CLOUDFLARE_API_TOKEN` with access to Pages in that account
+- `CLOUDFLARE_API_TOKEN` with access to Pages in the selected account
+- Optional `CLOUDFLARE_ACCOUNT_ID` secret or repository variable override. CI otherwise uses the verified account that hosts ComicEditor; the account ID is a non-secret routing identifier
 
-If they are missing, the owner must configure them through GitHub's secure settings. Do not paste token values into issues or chat, copy another repository's credentials, or broaden permissions automatically. GitHub releases use the built-in `GITHUB_TOKEN`; no PAT or signing key is required.
+If the token is missing, deployment is skipped cleanly and native release/build checks continue. The owner can configure the token through GitHub's secure settings. Do not paste token values into issues or chat, copy another repository's credentials, or broaden permissions automatically. GitHub releases use the built-in `GITHUB_TOKEN`; no PAT or signing key is required.
 
 To retry deployment without rebuilding, run the Pages workflow manually with the successful build's numeric run ID. The final step checks production HTTP responses, favicon, download links and the expected commit. Browser editing/audio QA is a separate end-to-end check.

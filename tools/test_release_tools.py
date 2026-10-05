@@ -39,6 +39,16 @@ class ReleaseTests(unittest.TestCase):
         for event in ("push", "workflow_dispatch"):
             self.assertEqual(VERSION.choose_version("0.1.0", "abc", "refs/heads/build/musicmachine-initial", event, [], {}), ("0.1.0", False))
 
+    def test_publication_requires_current_main_and_rejects_invalid_responses(self):
+        with patch.dict(os.environ, GITHUB_SHA="a" * 40, GITHUB_REPOSITORY="example/MusicMachine"):
+            with patch.object(VERSION.subprocess, "check_output", return_value="a" * 40 + "\n"):
+                self.assertTrue(VERSION.current_main())
+            with patch.object(VERSION.subprocess, "check_output", return_value="b" * 40 + "\n"):
+                self.assertFalse(VERSION.current_main())
+            with patch.object(VERSION.subprocess, "check_output", return_value="unexpected"):
+                with self.assertRaises(ValueError):
+                    VERSION.current_main()
+
     def test_version_validation(self):
         for value in ("1.0", "../test", "1.2.3-rc1"):
             with self.assertRaises(ValueError):

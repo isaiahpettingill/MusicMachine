@@ -93,6 +93,17 @@ def plan():
     print(f"Version {version}, publish={publish}")
 
 
+def current_main():
+    sha = os.environ["GITHUB_SHA"]
+    current = subprocess.check_output(
+        ["gh", "api", f"repos/{os.environ['GITHUB_REPOSITORY']}/git/ref/heads/main", "--jq", ".object.sha"],
+        text=True,
+    ).strip()
+    if not re.fullmatch(r"[0-9a-f]{40}", sha) or not re.fullmatch(r"[0-9a-f]{40}", current):
+        raise ValueError("Expected full commit SHAs when checking current main")
+    return sha == current
+
+
 def stamped(data):
     version = os.environ["MUSIC_RELEASE_VERSION"]
     version_tuple(version)
@@ -125,9 +136,11 @@ def source(destination):
 if __name__ == "__main__":
     if sys.argv[1] == "plan":
         plan()
+    elif sys.argv[1] == "current":
+        print(str(current_main()).lower())
     elif sys.argv[1] == "stamp":
         stamp()
     elif sys.argv[1] == "source":
         source(sys.argv[2])
     else:
-        raise ValueError("Expected plan, stamp, or source")
+        raise ValueError("Expected plan, current, stamp, or source")

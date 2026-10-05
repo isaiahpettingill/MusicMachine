@@ -15,8 +15,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || 'musicmachine-release' }}
-  cancel-in-progress: false
+  group: ${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) && 'musicmachine-release' || format('validation-{0}', github.ref) }}
+  cancel-in-progress: true
 
 jobs:
   prepare:
@@ -163,18 +163,34 @@ jobs:
       MUSIC_RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+      - name: Require the current main commit before publishing
+        id: current
+        run: |
+          publish=$(python3 tools/ci-version.py current)
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          if [ "$publish" != true ]; then
+            echo 'Main has moved on; this superseded build will not publish a release.' >> "$GITHUB_STEP_SUMMARY"
+          fi
       - uses: actions/download-artifact@v4
+        if: steps.current.outputs.publish == 'true'
         with:
           path: dist
           merge-multiple: true
       - name: Verify full release set and checksums
+        if: steps.current.outputs.publish == 'true'
         run: |
           rm -f dist/MusicMachine-pages.zip
           python3 tools/ci-version.py source dist/MusicMachine-source.zip
           python3 tools/release-manifest.py dist
           (cd dist && sha256sum --check SHA256SUMS)
       - name: Upload complete draft and publish
+        if: steps.current.outputs.publish == 'true'
         run: |
+          publish=$(python3 tools/ci-version.py current)
+          if [ "$publish" != true ]; then
+            echo 'Main has moved on; skipping the superseded release.'
+            exit 0
+          fi
           tag="v$MUSIC_RELEASE_VERSION"
           if gh release view "$tag" --json isDraft,targetCommitish > "$RUNNER_TEMP/release.json" 2>/dev/null; then
             jq -e --arg sha "$GITHUB_SHA" '.isDraft == true and .targetCommitish == $sha' "$RUNNER_TEMP/release.json"
@@ -182,4 +198,9 @@ jobs:
             gh release create "$tag" --draft --target "$GITHUB_SHA" --title "MusicMachine $tag" --generate-notes --notes-file docs/release-notes.md
           fi
           gh release upload "$tag" dist/* --clobber
+          publish=$(python3 tools/ci-version.py current)
+          if [ "$publish" != true ]; then
+            echo 'Main changed during upload; the obsolete release remains unpublished.'
+            exit 0
+          fi
           gh release edit "$tag" --draft=false --latest

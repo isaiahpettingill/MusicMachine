@@ -43,7 +43,7 @@ jobs:
       - name: Check optional Pages deployment credentials
         id: credentials
         env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID || '2fce3daa1512f468e77450b90b85cc53' }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: node tools/check-pages-credentials.mjs
       - name: Verify trusted successful build and reject stale automatic deploys
@@ -96,7 +96,7 @@ jobs:
       - name: Deploy production website
         if: steps.build.outputs.deploy == 'true'
         env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID || '2fce3daa1512f468e77450b90b85cc53' }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           BUILD_SHA: ${{ steps.build.outputs.sha }}
         run: |
