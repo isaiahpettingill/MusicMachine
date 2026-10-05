@@ -1,2 +1,88 @@
 # MusicMachine
-A chiptune-style synthesizer not linked to any real chip
+
+A native, keyboard-first chiptune studio for game music, without emulating a particular sound chip. Built with .NET 11, Avalonia, and NativeAOT.
+
+Start with **Neon Orchard**, an original 30-second demo, or choose **New** to compose from an empty pattern. Nothing needs an account or internet connection.
+
+## Build and run
+
+Install the .NET SDK pinned by `global.json` (11.0.100-rc.1.26425.128), then:
+
+```sh
+dotnet run --project src/MusicMachine.Desktop
+```
+
+Realtime audio uses SDL2. On Linux install `libsdl2-2.0-0`; the Windows release bundles the official SDL2 runtime. For a Windows source build, put SDL2.dll beside the executable. WAV and QOA export work without SDL2 or an audio device. The Linux desktop uses X11 or XWayland.
+
+```sh
+dotnet test tests/MusicMachine.Tests
+dotnet publish src/MusicMachine.Desktop -c Release -r linux-x64 -o artifacts/linux-x64
+```
+
+NativeAOT needs the platform's native compiler/linker prerequisites. Publishing on each target OS is recommended. For other architectures use the corresponding .NET runtime identifier. The source is cross-platform; check the validation report for platforms actually exercised.
+
+## Browser build
+
+The browser uses the same Avalonia editor and synthesis engine with WebAudio playback, native browser file pickers/downloads, and IndexedDB recovery. FFmpeg remains a desktop-only optional backend.
+
+```sh
+dotnet workload install wasm-tools
+dotnet publish src/MusicMachine.Browser -c Release -o artifacts/browser
+```
+
+Serve `artifacts/browser/wwwroot` over HTTP. Cloudflare Pages serves the application at `/` and Windows/Linux installers at `/download/`. Browser playback buffers up to five minutes and limits seek preparation to the first fifteen minutes; longer projects can be exported or played natively.
+
+## Clean workspace
+
+File, Edit, View, Pattern, Track, Instrument and Transport menus hold infrequent commands. Material icon buttons keep playback and pane controls compact, with tooltips and keyboard shortcuts.
+
+Use the center selector for Tracker, Drums, Instrument, Arrangement or Automation. Ctrl+L toggles the library and Ctrl+I toggles the inspector; the instrument editor opens in a two-column center layout when space allows. The inspector has collapsible sections. Theme and pane/workspace preferences persist locally (browser preferences use localStorage).
+
+**View → Theme** offers exactly the ComicEditor choices: Solarized light, Solarized dark, Catppuccin Mocha, Catppuccin Latte, Dark and Gruvbox. Mocha is the default. **View → FX columns** hides or shows tracker effect columns without changing the music or selected track.
+
+## Make a loop
+
+- Click a Tracker note cell. Type `F`, `F#`, `F4`, or `F#4`, then Enter. An omitted octave follows the closest earlier note in that track, or defaults to 4. Arrows navigate; Tab changes column; Delete clears; Esc cancels an unfinished edit
+- Empty rows sustain. `OFF` releases the envelope; `CUT` stops immediately. `F#4T` and `F#4TT` repeat a held note in eighth/sixteenth triplets. `F#4 S` applies swing to odd rows. Hover a cell for an explanation
+- Shift-click selects cells. Ctrl+C/Ctrl+V copy/paste tab-separated blocks transactionally. Paste rejects invalid notes and out-of-bounds blocks without partial changes
+- FX columns run together with the note: `A37` arpeggio, `VC0` volume, `G80` gate, `U02`/`D02` pitch slide, `R04` retrigger. The exact scales and persistence are in [format.md](docs/format.md)
+- Select a sound in the library, then **Track → Insert instrument change** to insert a section header without consuming a row. **Instrument → Make local copy** creates an independent preset and assigns it to the selected track
+- Shape amplitude/pitch envelopes, filtering and oscillators in the sound panel. Draw custom waveforms, add wavetable frames, and audition sounds
+- Program synthesized percussion in **Drums**. Click steps; right-click for accents; adjust lane controls or generate a starting groove
+- In **Arrangement**, reuse and reorder patterns, edit relative track trims and pans, mute/solo tracks, and draw volume automation. Playback loop markers are section boundaries
+- Space plays/stops. Ctrl+S saves, Ctrl+Shift+S saves as, Ctrl+O opens, Ctrl+Z undoes, Ctrl+Shift+Z redoes. F1 opens help
+
+The project is a self-contained binary CBOR `.song`; reusable presets are CBOR `.instrument` files. No JSON/ZIP substitution, external preset dependency, or reflection-based serializer is involved. Writes are atomic, history tracks saved content, and unsaved edits receive a recovery snapshot.
+
+## Export for Godot
+
+Choose **File → Export audio** for built-in PCM16 WAV or QOA. Exports use the same deterministic 48 kHz stereo engine as realtime playback and include the complete arrangement at exact musical length. Loop markers control playback; they do not silently crop the exported arrangement. Compose compatible endpoints or crossfade in your game to prevent a loop seam. Natural release-tail export is also available through the audio API.
+
+WAV is the baseline interchange format: copy it into your Godot project, set the desired loop import/playback settings, and use an AudioStreamPlayer. `.song` and `.instrument` are MusicMachine source formats, not built-in Godot resources. QOA requires a compatible Godot version or decoder; do not assume every Godot release imports standalone `.qoa` files.
+
+Optional **FFmpeg…** export accepts an explicit, trusted local executable path for FLAC/MP3/Opus/Ogg/M4A. Nothing is bundled or downloaded, and codec support depends on that FFmpeg build. Cancellation and failures preserve an existing output file.
+
+Headless export is available without opening the UI:
+
+```sh
+dotnet run --project src/MusicMachine.Desktop -- --render-demo neon-orchard.wav
+dotnet run --project src/MusicMachine.Desktop -- --export song.song music.qoa
+```
+
+## Architecture
+
+The layout follows the actual architectural patterns in the author's [ComicEditor](https://github.com/isaiahpettingill/comic_editor) and [Vibe Harder](https://github.com/isaiahpettingill/vibe-harder): a thin platform host, reusable Avalonia UI, explicit editing state and history, NativeAOT-friendly serialization, named theme colors, compact editor chrome, separate durable data and background work.
+
+- **MusicMachine.Core**: song/instrument model, explicit versioned CBOR, validators, note grammar, snapshots/history, presets/demo
+- **MusicMachine.Audio**: deterministic synthesis, sample-accurate sequencing, allocation-free audio rendering, SDL2 device lifecycle, WAV/QOA and optional FFmpeg export
+- **MusicMachine.App**: shared Avalonia controls, tracker, sound designer, arrangement/automation, drums, file workflows and recovery
+- **MusicMachine.Desktop**: platform startup and headless export entry point
+- **MusicMachine.Tests**: model corruption/roundtrip tests, editing/parser regressions, DSP timing/determinism/allocation tests, audio codec interoperability fixtures
+
+See [the format and timing contract](docs/format.md) and [audio backend documentation](src/MusicMachine.Audio/README.md). The engine has no UI dependency and can support a future Godot adapter; none is required for rendered audio.
+
+## Scope and known limits
+
+This is a standalone synthesizer, not a chip emulator or VST host. Instruments and sample buffers are synthesized; sample playback/import and tracker-format import are not included. Output is currently fixed at 48 kHz/PCM16 for WAV/QOA. Editing stops realtime playback before updating the snapshot. Grid refinement preserves event onsets by inserting empty rows; row-relative FX are measured in the newly selected row duration. Coarsening must preserve all events or be rejected. Linux verification does not substitute for Windows runtime testing.
+
+The repository's existing MIT license is preserved. QOA interoperability follows the public reference specification; attribution is included in the audio project.

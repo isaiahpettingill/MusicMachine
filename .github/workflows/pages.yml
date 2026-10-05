@@ -1,0 +1,109 @@
+name: Deploy browser to Cloudflare Pages
+
+on:
+  workflow_run:
+    workflows: ['Build and release']
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      build_run_id:
+        description: Successful Build and release run to deploy
+        required: true
+        type: string
+
+env:
+  WRANGLER_SEND_METRICS: 'false'
+  WRANGLER_SEND_ERROR_REPORTS: 'false'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: cloudflare-pages-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event != 'pull_request' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-24.04
+    environment:
+      name: cloudflare-pages
+      url: https://musicmachine.pages.dev
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Check optional Pages deployment credentials
+        id: credentials
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: node tools/check-pages-credentials.mjs
+      - name: Verify trusted successful build and reject stale automatic deploys
+        id: build
+        if: steps.credentials.outputs.configured == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_RUN_ID: ${{ inputs.build_run_id || github.event.workflow_run.id }}
+          AUTOMATIC: ${{ github.event_name == 'workflow_run' }}
+        run: |
+          [[ "$BUILD_RUN_ID" =~ ^[0-9]+$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN_ID" > "$RUNNER_TEMP/build.json"
+          jq -e --arg repo "$GITHUB_REPOSITORY" '.conclusion == "success" and .name == "Build and release" and .path == ".github/workflows/build.yml" and (.event == "push" or .event == "workflow_dispatch") and .head_repository.full_name == $repo' "$RUNNER_TEMP/build.json"
+          sha=$(jq -r .head_sha "$RUNNER_TEMP/build.json")
+          git merge-base --is-ancestor "$sha" origin/main
+          if [ "$AUTOMATIC" = true ] && [ "$sha" != "$(git rev-parse origin/main)" ]; then
+            echo 'Skipping superseded main build.'
+            echo 'deploy=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'deploy=true' >> "$GITHUB_OUTPUT"
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "run=$BUILD_RUN_ID" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@v4
+        if: steps.build.outputs.deploy == 'true'
+        with:
+          node-version: '24'
+      - uses: pnpm/action-setup@v4
+        if: steps.build.outputs.deploy == 'true'
+        with:
+          version: '11.22.0'
+      - name: Install locked deployment tools
+        if: steps.build.outputs.deploy == 'true'
+        run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v4
+        if: steps.build.outputs.deploy == 'true'
+        with:
+          name: cloudflare-pages
+          path: artifacts/download
+          run-id: ${{ steps.build.outputs.run }}
+          github-token: ${{ github.token }}
+      - name: Unpack verified browser build
+        if: steps.build.outputs.deploy == 'true'
+        env:
+          BUILD_SHA: ${{ steps.build.outputs.sha }}
+        run: |
+          mkdir -p artifacts/pages
+          unzip -q artifacts/download/MusicMachine-pages.zip -d artifacts/pages
+          jq -e --arg sha "$BUILD_SHA" '.commit == $sha' artifacts/pages/build.json
+      - name: Deploy production website
+        if: steps.build.outputs.deploy == 'true'
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          BUILD_SHA: ${{ steps.build.outputs.sha }}
+        run: |
+          node tools/ensure-pages-project.mjs
+          pnpm exec wrangler pages deploy --project-name musicmachine --branch main --commit-hash "$BUILD_SHA" --commit-dirty=true
+      - name: Verify live production app, downloads page, favicon and commit
+        if: steps.build.outputs.deploy == 'true'
+        env:
+          BUILD_SHA: ${{ steps.build.outputs.sha }}
+        run: node tools/verify-deployment.mjs https://musicmachine.pages.dev "$BUILD_SHA"

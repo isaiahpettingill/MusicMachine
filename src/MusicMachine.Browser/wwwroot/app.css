@@ -1,0 +1,21 @@
+:root { color-scheme: dark; --base:#1e1e2e;--surface:#313244;--line:#6c7086;--text:#cdd6f4;--muted:#bac2de;--accent:#89b4fa; }
+html,body,#out { width:100%;height:100%;margin:0;overflow:hidden; }
+body { background:var(--base);color:var(--text);font-family:Inter,system-ui,sans-serif; }
+.avalonia-splash { height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center; }
+.avalonia-splash h1 { font-size:24px;margin:14px 0 0; }
+.avalonia-splash p { max-width:34em;padding:0 24px;text-align:center;color:var(--muted); }
+.avalonia-splash .loading-hint { font-size:12px;margin-top:20px; }
+#audio-notice { position:fixed;z-index:1000;bottom:35px;left:50%;transform:translateX(-50%);max-width:min(760px,90vw);padding:12px 16px;border:1px solid var(--line);border-radius:4px;background:var(--surface); }
+#audio-notice:not([hidden]) { display:flex;align-items:center;gap:12px; }
+#audio-notice-text { font-size:13px;line-height:1.5; }
+button { border:1px solid var(--line);border-radius:4px;background:var(--surface);color:var(--text);padding:7px 11px;cursor:pointer;white-space:nowrap; }
+button:focus-visible,a:focus-visible { outline:2px solid var(--accent);outline-offset:3px; }
+#dismiss-audio { background:transparent;border:none;font-size:22px;padding:0 4px; }
+#out { height:calc(100% - 22px); }
+#host-footer { height:22px;padding:0 12px;display:flex;align-items:center;justify-content:space-between;box-sizing:border-box;background:var(--base);color:var(--muted);border-top:1px solid var(--surface);font-size:10px; }
+a { color:var(--accent);text-underline-offset:3px; }
+body[data-theme="catppuccin-latte"] { color-scheme:light;--base:#eff1f5;--surface:#e6e9ef;--line:#8c8fa1;--text:#4c4f69;--muted:#5c5f77;--accent:#1e66f5; }
+body[data-theme="solarized-light"] { color-scheme:light;--base:#f0efea;--surface:#f5f4f0;--line:#989da3;--text:#000;--muted:#60656b;--accent:#147bc1; }
+body[data-theme="solarized-dark"] { --base:#002b36;--surface:#073642;--line:#586e75;--text:#93a1a1;--muted:#839496;--accent:#2aa198; }
+body[data-theme="dark"] { --base:#202020;--surface:#2d2d2d;--line:#737373;--text:#e8e8e8;--muted:#b8b8b8;--accent:#75beff; }
+body[data-theme="gruvbox"] { --base:#282828;--surface:#32302f;--line:#7c6f64;--text:#ebdbb2;--muted:#bdae93;--accent:#fabd2f; }

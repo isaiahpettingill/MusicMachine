@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk.WebAssembly">
+  <PropertyGroup>
+    <TargetFramework>net11.0-browser</TargetFramework>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <OverrideHtmlAssetPlaceholders>true</OverrideHtmlAssetPlaceholders>
+    <!-- WebAssembly uses the managed runtime; NativeAOT is the desktop release target. -->
+    <RunAOTCompilation>false</RunAOTCompilation>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Avalonia.Browser" />
+    <PackageReference Include="SkiaSharp" />
+    <PackageReference Include="SkiaSharp.NativeAssets.WebAssembly" />
+    <PackageReference Include="HarfBuzzSharp" />
+    <PackageReference Include="HarfBuzzSharp.NativeAssets.WebAssembly" />
+    <ProjectReference Include="../MusicMachine.App/MusicMachine.App.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <StaticWebAssetFingerprintPattern Include="JS" Pattern="main.js" Expression="#[.{fingerprint}]!" />
+  </ItemGroup>
+  <!-- Avalonia also contributes older net9 archives. Link one compatible pair. -->
+  <Target Name="SelectNet11GraphicsArchives" BeforeTargets="PrepareForBuild">
+    <ItemGroup>
+      <NativeFileReference Remove="@(NativeFileReference)"
+        Condition="$([System.String]::Copy('%(NativeFileReference.Identity)').Contains('libSkiaSharp')) or $([System.String]::Copy('%(NativeFileReference.Identity)').Contains('libHarfBuzzSharp'))" />
+      <NativeFileReference Include="$(SkiaSharpStaticLibraryPath)/5.0.6/st,simd/*.a" />
+      <NativeFileReference Include="$(HarfBuzzSharpStaticLibraryPath)/5.0.6/st,simd/*.a" />
+    </ItemGroup>
+    <Error Condition="!Exists('$(SkiaSharpStaticLibraryPath)/5.0.6/st,simd/libSkiaSharp.a')" Text="The .NET 11 Skia WebAssembly archive was not found. Restore browser package dependencies." />
+  </Target>
+</Project>

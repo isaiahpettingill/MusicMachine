@@ -1,0 +1,185 @@
+name: Build and release
+
+on:
+  push:
+    branches: [main, 'build/**']
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+env:
+  AVALONIA_TELEMETRY_OPTOUT: '1'
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || 'musicmachine-release' }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      publish: ${{ steps.version.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/ci-version.py plan
+
+  tests:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+          include-prerelease: true
+      - run: dotnet test tests/MusicMachine.Tests -c Release
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: node --test tools/test-pages.mjs src/MusicMachine.Browser/tests/audio.test.js
+      - run: python -m unittest discover -s tools -p 'test_release_tools.py' -v
+      - name: Test Linux installer safety and upgrade paths
+        if: runner.os == 'Linux'
+        run: |
+          bash -n tools/install-linux.sh
+          python3 -m unittest discover -s tools -p 'test_linux_installer.py' -v
+
+  desktop:
+    needs: [prepare, tests]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            rid: win-x64
+          - os: ubuntu-24.04
+            rid: linux-x64
+    runs-on: ${{ matrix.os }}
+    env:
+      MUSIC_RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: python tools/ci-version.py stamp
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+          include-prerelease: true
+      - name: Install Linux native build and audio dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev libsdl2-2.0-0
+      - name: Publish native desktop app
+        run: dotnet publish src/MusicMachine.Desktop -c Release -r ${{ matrix.rid }} -p:PublishAot=true -o artifacts/${{ matrix.rid }}
+      - name: Stage licenses, icons, metadata and Windows audio runtime
+        run: python tools/prepare-desktop.py artifacts/${{ matrix.rid }} ${{ matrix.rid }}
+      - name: Smoke-test native audio export
+        run: python tools/test-native-payload.py artifacts/${{ matrix.rid }}
+      - name: Archive Windows portable app
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path 'artifacts/win-x64/*' -DestinationPath MusicMachine-win-x64.zip
+      - name: Install NSIS
+        if: runner.os == 'Windows'
+        run: choco install nsis --version=3.12.0 -y --no-progress
+      - name: Build and test Windows installer
+        if: runner.os == 'Windows'
+        run: |
+          python tools/package-windows-installer.py artifacts/win-x64 MusicMachine-win-x64-setup.exe
+          python tools/test-windows-installer.py MusicMachine-win-x64-setup.exe artifacts/win-x64
+      - name: Archive Linux app and build version-pinned installer
+        if: runner.os == 'Linux'
+        run: |
+          tar -C artifacts/linux-x64 -czf MusicMachine-linux-x64.tar.gz .
+          python3 tools/package-linux-installer.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.rid }}
+          if-no-files-found: error
+          path: |
+            MusicMachine-${{ matrix.rid }}*
+            install-musicmachine.sh
+
+  browser:
+    needs: [prepare, tests]
+    runs-on: ubuntu-24.04
+    env:
+      MUSIC_RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 tools/ci-version.py stamp
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+          include-prerelease: true
+      - name: Install WebAssembly toolchain
+        run: dotnet workload install wasm-tools
+      - name: Publish browser app
+        run: dotnet publish src/MusicMachine.Browser -c Release -o artifacts/browser
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Prepare browser release and Cloudflare assets
+        run: |
+          cp LICENSE artifacts/browser/wwwroot/
+          cp -r licenses artifacts/browser/wwwroot/
+          (cd artifacts/browser/wwwroot && zip -qr ../../../MusicMachine-browser-wasm.zip .)
+          node tools/prepare-pages.mjs artifacts/browser/wwwroot artifacts/pages
+          (cd artifacts/pages && zip -qr ../MusicMachine-pages.zip .)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: browser-wasm
+          path: MusicMachine-browser-wasm.zip
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cloudflare-pages
+          path: artifacts/MusicMachine-pages.zip
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub release
+    if: needs.prepare.outputs.publish == 'true'
+    needs: [prepare, desktop, browser]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      MUSIC_RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Verify full release set and checksums
+        run: |
+          rm -f dist/MusicMachine-pages.zip
+          python3 tools/ci-version.py source dist/MusicMachine-source.zip
+          python3 tools/release-manifest.py dist
+          (cd dist && sha256sum --check SHA256SUMS)
+      - name: Upload complete draft and publish
+        run: |
+          tag="v$MUSIC_RELEASE_VERSION"
+          if gh release view "$tag" --json isDraft,targetCommitish > "$RUNNER_TEMP/release.json" 2>/dev/null; then
+            jq -e --arg sha "$GITHUB_SHA" '.isDraft == true and .targetCommitish == $sha' "$RUNNER_TEMP/release.json"
+          else
+            gh release create "$tag" --draft --target "$GITHUB_SHA" --title "MusicMachine $tag" --generate-notes --notes-file docs/release-notes.md
+          fi
+          gh release upload "$tag" dist/* --clobber
+          gh release edit "$tag" --draft=false --latest

@@ -1,0 +1,16 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="MusicMachine.App.Styles.MaterialIcons"
+        xmlns:icons="clr-namespace:IconPacks.Avalonia.Material;assembly=IconPacks.Avalonia.Material">
+    <Styles.Resources>
+        <ControlTheme x:Key="{x:Type icons:PackIconMaterial}" TargetType="icons:PackIconMaterial">
+            <Setter Property="Template">
+                <ControlTemplate TargetType="icons:PackIconMaterial">
+                    <Viewbox>
+                        <Path Data="{TemplateBinding Data}" Fill="{TemplateBinding Foreground}" />
+                    </Viewbox>
+                </ControlTemplate>
+            </Setter>
+        </ControlTheme>
+    </Styles.Resources>
+</Styles>

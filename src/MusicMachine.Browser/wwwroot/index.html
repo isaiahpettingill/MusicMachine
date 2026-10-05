@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <base href="./">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1e1e2e">
+  <meta name="description" content="Make original game music with MusicMachine, a local-first tracker and synthesizer. Create songs, reusable instruments, and export WAV or QOA in your browser.">
+  <title>MusicMachine</title>
+  <link rel="icon" href="./favicon.ico" sizes="any">
+  <link rel="preload" id="webassembly">
+  <script type="importmap"></script>
+  <script type="module" src="main#[.{fingerprint}].js"></script>
+  <link rel="stylesheet" href="./app.css">
+</head>
+<body>
+  <div id="out">
+    <div class="avalonia-splash" role="status">
+      <img src="./favicon.ico" alt="" width="80" height="80">
+      <h1>MusicMachine</h1>
+      <p id="loading-status">Loading your music workspace…</p>
+      <p class="loading-hint">Your songs stay on your device. Sound starts when you press Play.</p>
+      <a href="/download/">Download for Windows &amp; Linux</a>
+    </div>
+  </div>
+  <footer id="host-footer"><span></span><a href="/download/" target="_blank" rel="noopener">Download for Windows &amp; Linux ↗</a></footer>
+  <aside id="audio-notice" hidden role="alert" aria-live="polite">
+    <span id="audio-notice-text"></span>
+    <button id="enable-audio" type="button">Enable sound</button>
+    <button id="dismiss-audio" type="button" aria-label="Dismiss audio notice">×</button>
+  </aside>
+  <noscript>Enable JavaScript to run MusicMachine.</noscript>
+</body>
+</html>

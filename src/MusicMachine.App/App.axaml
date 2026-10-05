@@ -1,0 +1,89 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:styles="clr-namespace:MusicMachine.App.Styles"
+             x:Class="MusicMachine.App.App" RequestedThemeVariant="Dark">
+  <Application.Resources>
+    <Color x:Key="SystemAccentColor">#89B4FA</Color>
+    <SolidColorBrush x:Key="EditorBackground">#1E1E2E</SolidColorBrush>
+    <SolidColorBrush x:Key="EditorSurface">#313244</SolidColorBrush>
+    <SolidColorBrush x:Key="EditorHeader">#45475A</SolidColorBrush>
+    <SolidColorBrush x:Key="EditorWorkspace">#181825</SolidColorBrush>
+    <SolidColorBrush x:Key="EditorBorder">#6C7086</SolidColorBrush>
+    <SolidColorBrush x:Key="EditorText">#CDD6F4</SolidColorBrush>
+    <SolidColorBrush x:Key="EditorMuted">#BAC2DE</SolidColorBrush>
+    <SolidColorBrush x:Key="EditorAccent">#89B4FA</SolidColorBrush>
+    <SolidColorBrush x:Key="EditorSelection">#45475A</SolidColorBrush>
+    <SolidColorBrush x:Key="EditorError">#F38BA8</SolidColorBrush>
+    <SolidColorBrush x:Key="EditorSuccess">#A6E3A1</SolidColorBrush>
+    <SolidColorBrush x:Key="EditorSecondary">#F38BA8</SolidColorBrush>
+    <SolidColorBrush x:Key="EditorAccentText">#181825</SolidColorBrush>
+  </Application.Resources>
+  <Application.Styles>
+    <FluentTheme/>
+    <styles:MaterialIcons/>
+    <Style Selector="Window">
+      <Setter Property="Background" Value="{DynamicResource EditorBackground}"/>
+      <Setter Property="Foreground" Value="{DynamicResource EditorText}"/>
+      <Setter Property="FontSize" Value="13"/>
+      <Setter Property="FontFamily" Value="avares://Avalonia.Fonts.Inter/Assets#Inter"/>
+    </Style>
+    <Style Selector="Button">
+      <Setter Property="CornerRadius" Value="4"/>
+      <Setter Property="Padding" Value="9,5"/>
+      <Setter Property="MinHeight" Value="30"/>
+      <Setter Property="Background" Value="{DynamicResource EditorSurface}"/>
+      <Setter Property="Foreground" Value="{DynamicResource EditorText}"/>
+      <Setter Property="BorderThickness" Value="0"/>
+    </Style>
+    <Style Selector="Button:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{DynamicResource EditorHeader}"/>
+      <Setter Property="Foreground" Value="{DynamicResource EditorText}"/>
+    </Style>
+    <Style Selector="Button:pressed /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{DynamicResource EditorSelection}"/>
+    </Style>
+    <Style Selector="Button.accent">
+      <Setter Property="Background" Value="{DynamicResource EditorAccent}"/>
+      <Setter Property="Foreground" Value="{DynamicResource EditorAccentText}"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+    </Style>
+    <Style Selector="Button.accent:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{DynamicResource EditorAccent}"/>
+      <Setter Property="Foreground" Value="{DynamicResource EditorAccentText}"/>
+      <Setter Property="Opacity" Value="0.85"/>
+    </Style>
+    <Style Selector="Button.subtle"><Setter Property="Background" Value="Transparent"/></Style>
+    <Style Selector="Button.selected">
+      <Setter Property="Background" Value="{DynamicResource EditorSelection}"/>
+      <Setter Property="Foreground" Value="{DynamicResource EditorAccent}"/>
+    </Style>
+    <Style Selector="TextBox">
+      <Setter Property="CornerRadius" Value="4"/>
+      <Setter Property="Background" Value="{DynamicResource EditorWorkspace}"/>
+      <Setter Property="Foreground" Value="{DynamicResource EditorText}"/>
+      <Setter Property="BorderBrush" Value="{DynamicResource EditorBorder}"/>
+      <Setter Property="SelectionBrush" Value="{DynamicResource EditorSelection}"/>
+      <Setter Property="MinHeight" Value="30"/>
+    </Style>
+    <Style Selector="ComboBox">
+      <Setter Property="MinHeight" Value="30"/>
+      <Setter Property="Background" Value="{DynamicResource EditorSurface}"/>
+      <Setter Property="Foreground" Value="{DynamicResource EditorText}"/>
+      <Setter Property="CornerRadius" Value="4"/>
+    </Style>
+    <Style Selector="NumericUpDown">
+      <Setter Property="ShowButtonSpinner" Value="False"/>
+      <Setter Property="MinHeight" Value="30"/>
+      <Setter Property="Background" Value="{DynamicResource EditorSurface}"/>
+      <Setter Property="Foreground" Value="{DynamicResource EditorText}"/>
+    </Style>
+    <Style Selector="ToolTip">
+      <Setter Property="Background" Value="{DynamicResource EditorHeader}"/>
+      <Setter Property="Foreground" Value="{DynamicResource EditorText}"/>
+      <Setter Property="MaxWidth" Value="420"/>
+    </Style>
+    <Style Selector="Expander"><Setter Property="Padding" Value="0"/></Style>
+    <Style Selector="Expander /template/ ToggleButton"><Setter Property="MinHeight" Value="28"/><Setter Property="Padding" Value="4"/></Style>
+    <Style Selector="Slider"><Setter Property="MinHeight" Value="24"/></Style>
+  </Application.Styles>
+</Application>

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-labelledby="title description">
+  <title id="title">MusicMachine</title>
+  <desc id="description">An ivory musical note whose circular snowball head is a comet, with one smooth curved golden tail. The eighth-note flag sweeps toward the upper left with the tail, on a transparent background.</desc>
+  <!-- Original MusicMachine artwork, distributed under the repository's MIT license. -->
+  <g transform="translate(-1 -14) scale(1.2)">
+  <!-- One continuous, tapered curve forms the entire comet tail. -->
+  <path d="M34 28C25 98 60 167 135 196l30-42C103 137 49 83 34 28Z" transform="translate(0 3)" fill="#9e6c59" opacity=".25"/>
+  <path d="M34 28C25 98 60 167 135 196l30-42C103 137 49 83 34 28Z" fill="#ffba61"/>
+  <!-- Restrained edge shading follows the same single tail, without extra streaks. -->
+  <path d="M34 28C25 98 60 167 135 196l4-6C69 164 32 98 34 28Z" fill="#e79755"/>
+  <!-- The notehead is a true 31-unit circular snowball. A fine edge retains
+       contrast on light surfaces without adding a tile or background. -->
+  <path d="M171 81C147 77 127 58 122 29c14 19 35 28 63 29v116a31 31 0 1 1-14-25.885Z" transform="translate(0 3)" fill="#655c80" opacity=".22"/>
+  <path d="M171 81C147 77 127 58 122 29c14 19 35 28 63 29v116a31 31 0 1 1-14-25.885Z" fill="#fff5dc" stroke="#6b617e" stroke-width="3" stroke-linejoin="round"/>
+  <path d="M174 82l2 .4v70l-2-1.4Z" fill="#fff" opacity=".7"/>
+  </g>
+</svg>

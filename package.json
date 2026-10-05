@@ -1,0 +1,6 @@
+{
+  "name": "musicmachine-deployment",
+  "private": true,
+  "scripts": { "deploy": "wrangler pages deploy", "test": "node --test tools/test-pages.mjs" },
+  "devDependencies": { "wrangler": "4.139.0" }
+}

@@ -426,3 +426,17 @@ FodyWeavers.xsd
 
 # Official VS Code C# Dev Kit Extension exclusion
 #*.lscache
+
+# Local build, release and Pages deployment output
+/artifacts/
+/dist/
+/node_modules/
+/.wrangler/
+/MusicMachine-*.zip
+/MusicMachine-*.tar.gz*
+/MusicMachine-*-setup.exe
+/install-musicmachine.sh
+**/__pycache__/
+
+# Local GUI verification working copy (the shareable example is in examples/)
+/ui-composed.song

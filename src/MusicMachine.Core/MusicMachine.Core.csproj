@@ -1,0 +1,1 @@
+<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><PackageReference Include="System.Formats.Cbor"/></ItemGroup></Project>
