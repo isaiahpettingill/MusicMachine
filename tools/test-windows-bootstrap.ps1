@@ -121,7 +121,9 @@ function New-Fixture {
 function Add-Response([byte[]] $Bytes, [int] $Status = 200, [string] $Location = '', [long] $Length = -1) {
     $stream = [FixtureStream]::new($Bytes)
     $script:fixture.Streams.Add($stream)
-    $response = [Net.Http.HttpResponseMessage]::new([Net.HttpStatusCode]$Status)
+    # .NET Framework's enum predates HTTP 308, but HttpResponseMessage supports
+    # that numeric status. Avoid PowerShell's stricter named-enum conversion.
+    $response = [Net.Http.HttpResponseMessage]::new([Enum]::ToObject([Net.HttpStatusCode], $Status))
     $response.Content = [Net.Http.StreamContent]::new($stream)
     if ($Length -ge 0) { $response.Content.Headers.ContentLength = $Length }
     if ($Location) { $response.Headers.Location = [Uri]::new($Location, [UriKind]::RelativeOrAbsolute) }

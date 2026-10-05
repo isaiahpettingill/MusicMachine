@@ -67,10 +67,10 @@ public static class FxParser
         error = "";
         var input = (text ?? "").Trim().ToUpperInvariant();
         if (input.Length == 0 || input == "...") return true;
-        if (input.Length != 3 || "AVGUDR".IndexOf(input[0]) < 0 || !byte.TryParse(input.AsSpan(1), NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out var value))
-        { error = "Use Axy, Vxx, Gxx, Uxx, Dxx or Rxx with two hexadecimal digits"; return false; }
-        if (input[0] == 'R' && value > 32)
-        { error = "Retrigger count must be R00–R20 (0–32; 00 disables)"; return false; }
+        if (input.Length != 3 || FxCatalog.Find(input[0]) is not { } definition || !byte.TryParse(input.AsSpan(1), NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out var value))
+        { error = FxCatalog.SyntaxHelp; return false; }
+        if (value > definition.MaximumValue)
+        { error = definition.RangeError; return false; }
         effect = new(input[0], value);
         return true;
     }

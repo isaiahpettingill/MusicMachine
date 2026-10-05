@@ -9,6 +9,7 @@ import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { parsePagesHeaders, readPreparedAsset, viewPreferences, inspectPng, requireRenderedCanvas, renderedDifference } from './published-smoke/support.mjs';
 import { audioObserverScript } from './published-smoke/audio-observer.mjs';
+import { keyEvents } from './published-smoke/key-events.mjs';
 
 if (process.env.CI !== 'true') throw new Error('Published-app browser smoke is CI-only. Do not use it to bypass a local browser/socket restriction.');
 if (!process.argv[2]) throw new Error('Usage: node smoke-published-app.mjs <prepared-pages-directory> [evidence-directory]');
@@ -91,11 +92,8 @@ async function focusApp(canvas) {
     await command('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 });
     await command('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 });
 }
-async function key(code, key, number, ctrl = false) {
-    if (ctrl) await command('Input.dispatchKeyEvent', { type: 'rawKeyDown', code: 'ControlLeft', key: 'Control', windowsVirtualKeyCode: 17, nativeVirtualKeyCode: 17, modifiers: 2 });
-    await command('Input.dispatchKeyEvent', { type: 'rawKeyDown', code, key, windowsVirtualKeyCode: number, nativeVirtualKeyCode: number, modifiers: ctrl ? 2 : 0 });
-    await command('Input.dispatchKeyEvent', { type: 'keyUp', code, key, windowsVirtualKeyCode: number, nativeVirtualKeyCode: number, modifiers: ctrl ? 2 : 0 });
-    if (ctrl) await command('Input.dispatchKeyEvent', { type: 'keyUp', code: 'ControlLeft', key: 'Control', windowsVirtualKeyCode: 17, nativeVirtualKeyCode: 17, modifiers: 0 });
+async function key(code, key, number, ctrl = false, shift = false) {
+    for (const event of keyEvents(code, key, number, ctrl, shift)) await command('Input.dispatchKeyEvent', event);
 }
 async function prefs() { return viewPreferences(await evaluate(`localStorage.getItem('musicmachine.views')`)); }
 async function expectPref(name, value) { await until(`Preference ${name}=${value}`, `localStorage.getItem('musicmachine.views')`, text => viewPreferences(text)[name] === value, 10000); }
@@ -172,6 +170,20 @@ try {
     report.checks.push('Ctrl+L/Ctrl+I routed through shared app, persist through reload and restore through keyboard');
 
     await focusApp(canvas);
+    // Fresh storage starts with an empty song. Open the actual built-in example
+    // through the shared menu shortcut before expecting a non-silent signal.
+    const projectStoreAvailable = await evaluate(`import('./recovery.js').then(module => typeof module.createProjectStore === 'function')`);
+    if (projectStoreAvailable) {
+        assert.equal(await evaluate(`import('./recovery.js').then(module => module.createProjectStore().list('recovery-'))`), '', 'Fresh blank startup must not create dirty recovery');
+        await key('KeyD', 'D', 68, true, true);
+        await until('Explicit demo selection and durable unsaved snapshot', `import('./recovery.js').then(module => module.createProjectStore().list('recovery-'))`, keys => typeof keys === 'string' && keys.length > 0, 15000);
+        await delay(150);
+        await screenshot('03b-explicit-demo.png', canvas);
+        report.checks.push('Fresh blank startup and explicit demo command create an independent recovery snapshot');
+    } else {
+        assert.equal(requireReadySignal, false, 'Current build must expose project persistence');
+        report.checks.push('Legacy artifact compatibility: demo is the existing startup song');
+    }
     const before = await evaluate('__musicMachineSmokeAudio.snapshot()');
     assert.equal(before.supported, true, 'Native Web Audio must be available');
     await key('Space', ' ', 32);

@@ -65,3 +65,15 @@ test('audio observer is syntactically valid and observes native methods rather t
     assert.match(audioObserverScript, /getFloatTimeDomainData/);
     assert.doesNotMatch(audioObserverScript, /OfflineAudioContext|fakeAudio|globalThis\.AudioContext\s*=/);
 });
+
+test('real demo shortcut holds and releases Control and Shift in the right order', async () => {
+    const { keyEvents } = await import('../tools/published-smoke/key-events.mjs');
+    const events = keyEvents('KeyD', 'D', 68, true, true);
+    assert.deepEqual(events.map(e => [e.type, e.code, e.modifiers]), [
+        ['rawKeyDown', 'ControlLeft', 2], ['rawKeyDown', 'ShiftLeft', 10],
+        ['rawKeyDown', 'KeyD', 10], ['keyUp', 'KeyD', 10],
+        ['keyUp', 'ShiftLeft', 2], ['keyUp', 'ControlLeft', 0]
+    ]);
+    assert.deepEqual(keyEvents('Space', ' ', 32).map(e => [e.type, e.modifiers]), [['rawKeyDown', 0], ['keyUp', 0]]);
+    assert.equal(keyEvents('KeyI', 'i', 73, true).length, 4);
+});

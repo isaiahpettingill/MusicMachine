@@ -10,51 +10,97 @@ public sealed partial class MainView
 {
     private static readonly FilePickerFileType SongType = new("MusicMachine song") { Patterns = ["*.song"] };
     private static readonly FilePickerFileType InstrumentType = new("MusicMachine instrument") { Patterns = ["*.instrument"] };
+    private async Task<ProjectFileSelection?> PickSongToSaveAsync()
+    {
+        var name = SafeName(editor.Song.Title) + ".song";
+        if (suppliedProjectFiles is not null) return await suppliedProjectFiles.SaveAsync(name);
+        var file = await StorageProvider.SaveFilePickerAsync(new() { Title = "Save song", SuggestedFileName = name, DefaultExtension = "song", FileTypeChoices = [SongType], ShowOverwritePrompt = true });
+        return file is null ? null : ProjectFileSelection.From(file);
+    }
+    private async Task<ProjectFileSelection?> PickSongToOpenAsync()
+    {
+        if (suppliedProjectFiles is not null) return await suppliedProjectFiles.OpenAsync();
+        var files = await StorageProvider.OpenFilePickerAsync(new() { Title = "Open song", AllowMultiple = false, FileTypeFilter = [SongType] });
+        return files.Count == 0 ? null : ProjectFileSelection.From(files[0]);
+    }
     private async Task<bool> SaveSong(bool saveAs = false)
     {
-        if (!tracker.CommitPending()) return false;
+        if (saveBusy || !tracker.CommitPending()) return false;
+        saveBusy = true; SetProjectInputEnabled(false);
         try
         {
-            IStorageFile? file = null; var destination = filePath;
-            if (saveAs || filePath is null || OperatingSystem.IsBrowser())
+            ProjectFileSelection? file = null; var destination = filePath;
+            if (saveAs || filePath is null || projectStorage.UsesProjectSnapshots)
             {
-                file = await StorageProvider.SaveFilePickerAsync(new() { Title = "Save song", SuggestedFileName = SafeName(editor.Song.Title) + ".song", DefaultExtension = "song", FileTypeChoices = [SongType], ShowOverwritePrompt = true });
-                if (file is null) { SetStatus("Save cancelled"); return false; } destination = file.TryGetLocalPath();
+                file = await PickSongToSaveAsync();
+                if (file is null) { SetStatus("Save cancelled"); return false; }
+                destination = projectStorage.UsesProjectSnapshots ? null : file.LocalPath;
             }
-            if (destination is not null && !OperatingSystem.IsBrowser()) SongFile.Save(destination, editor.Song);
-            else if (file is not null) { await using var output = await file.OpenWriteAsync(); if (output.CanSeek) output.SetLength(0); await output.WriteAsync(SongFile.Write(editor.Song)); }
+            var snapshot = SongFile.Clone(editor.Song); var revision = editor.Revision;
+            if (destination is not null && !projectStorage.UsesProjectSnapshots) SongFile.Save(destination, snapshot);
+            else if (file is not null)
+            {
+                await using var output = await file.OpenWriteAsync();
+                if (output.CanSeek) output.SetLength(0);
+                await output.WriteAsync(SongFile.Write(snapshot)); await output.FlushAsync();
+            }
             else return false;
-            filePath = destination; editor.MarkSaved(); Refresh(); ClearRecovery(); SetStatus("Saved " + (file?.Name ?? destination)); return true;
+            // Closing/flushing the selected destination must succeed before changing saved state.
+            filePath = destination;
+            if (editor.Revision == revision) { editor.MarkSaved(); await ClearRecoveryAsync(); }
+            var notice = await RememberCurrentProjectAsync(snapshot, destination);
+            Refresh(); SetStatus("Saved " + (file?.Name ?? destination) + (notice is null ? "" : " · " + notice)); return true;
         }
         catch (Exception e) { SetStatus("Save failed: " + e.Message); return false; }
-        finally { RestoreInputFocus(); }
+        finally { saveBusy = false; if (!projectChangeBusy) SetProjectInputEnabled(true); RestoreInputFocus(); }
     }
     private async Task OpenSong()
     {
-        if (!await ConfirmDiscard()) return;
+        if (projectChangeBusy || saveBusy) return;
+        projectChangeBusy = true; SetProjectInputEnabled(false);
         try
         {
-            var files = await StorageProvider.OpenFilePickerAsync(new() { Title = "Open song", AllowMultiple = false, FileTypeFilter = [SongType] });
-            if (files.Count == 0) { SetStatus("Open cancelled"); return; }
-            var file = files[0]; if (!OperatingSystem.IsBrowser() && file.TryGetLocalPath() is { } path) await OpenPath(path);
-            else { await using var stream = await file.OpenReadAsync(); LoadSong(await SongFile.ReadAsync(stream), null, file.Name); }
+            if (!await ConfirmDiscard()) return;
+            var file = await PickSongToOpenAsync();
+            if (file is null) { SetStatus("Open cancelled"); return; }
+            if (!projectStorage.UsesProjectSnapshots && file.LocalPath is { } path) await OpenPath(path);
+            else
+            {
+                Song song;
+                await using (var stream = await file.OpenReadAsync()) { song = await SongFile.ReadAsync(stream); }
+                await LoadSong(song, null, file.Name);
+            }
         }
         catch (Exception e) { SetStatus("Could not open song: " + e.Message); }
-        finally { RestoreInputFocus(); }
+        finally { projectChangeBusy = false; SetProjectInputEnabled(true); RestoreInputFocus(); }
     }
-    private Task OpenPath(string path)
+    private async Task OpenPath(string path)
     {
-        try { LoadSong(SongFile.Load(path), path, Path.GetFileName(path)); }
-        catch (Exception e) { SetStatus("Could not open song: " + e.Message); } return Task.CompletedTask;
+        try { var full = Path.GetFullPath(path); var song = SongFile.Load(full); await LoadSong(song, full, Path.GetFileName(full)); }
+        catch (Exception e) { SetStatus("Could not open song: " + e.Message); }
     }
-    private void LoadSong(Song song, string? path, string name)
+    private async Task LoadSong(Song song, string? path, string name)
     {
-        Stop(); editor.Load(song); filePath = path; activePattern = song.Patterns[0].Id; selectedInstrument = song.Instruments[0].Id; chosenTrack = 0; SynchronizeDrumSound(); Refresh(); ClearRecovery(); SetStatus("Opened " + name);
+        SongFile.Validate(song);
+        await ClearRecoveryAsync(); sessionRecoveryKey = NewRecoveryKey();
+        SetCurrentSong(song, path);
+        var notice = await RememberCurrentProjectAsync();
+        SetStatus("Opened " + name + (notice is null ? "" : " · " + notice));
     }
     private async Task NewSong()
     {
-        if (!await ConfirmDiscard()) return;
-        Stop(); editor.Load(DemoSong.CreateEmpty()); filePath = null; activePattern = editor.Song.Patterns[0].Id; selectedInstrument = editor.Song.Instruments[0].Id; SynchronizeDrumSound(); Refresh(); ClearRecovery(); SetStatus("New song · type notes, add a beat, then arrange your patterns");
+        if (projectChangeBusy || saveBusy) return;
+        projectChangeBusy = true; SetProjectInputEnabled(false);
+        try
+        {
+            if (!await ConfirmDiscard()) return;
+            await projectStartup.ResetAsync();
+            await ClearRecoveryAsync(); sessionRecoveryKey = NewRecoveryKey();
+            SetCurrentSong(DemoSong.CreateEmpty(), null);
+            SetStatus("New song · type notes, add a beat, then arrange your patterns");
+        }
+        catch (Exception ex) { SetStatus("Could not start a new song: " + ex.Message); }
+        finally { projectChangeBusy = false; SetProjectInputEnabled(true); RestoreInputFocus(); }
     }
     private async Task<bool> ConfirmDiscard()
     {
@@ -67,11 +113,12 @@ public sealed partial class MainView
     {
         if (exportBusy) { SetStatus("An export is running. Finish or cancel it before closing."); return false; }
         if (updateRestartApproved) return true;
+        if (projectChangeBusy || saveBusy) { SetStatus("Finish or cancel the current file operation before closing."); return false; }
         updateOperation?.Cancel();
         // A close during extraction/handshake first cancels restart. It must never race update approval.
         if (updateInstalling) { updateMessage = "Cancelling restart…"; RefreshUpdateControls(); return false; }
         var close = await ConfirmDiscard();
-        if (close) { StopUpdates(); ClearRecovery(); }
+        if (close) { StopUpdates(); await ClearRecoveryAsync(); }
         return close;
     }
     private async Task<string?> Ask(string title, string message, params string[] choices)
@@ -192,12 +239,11 @@ public sealed partial class MainView
         }
         catch (Exception e) { SetStatus("Instrument import: " + e.Message); }
     }
-    private Task ShowHelp() => Ask("Make a loop", "1. Select a pattern and click a note cell. Type F, F#, F4 or F#4; Enter commits. Octave follows the nearest earlier note in that track, or 4. Arrows move; Delete clears; Esc cancels. Empty rows sustain. OFF releases; CUT stops. T / TT repeat held notes as eighth / sixteenth triplets; S swings.\n\n2. FX columns apply together: Axy arpeggio semitones, Vxx persistent volume (00–FF), Gxx gate fraction (00–FF), Uxx / Dxx slide in semitones/sec, Rxx retriggers per row (01–20 hex). Instrument here inserts a section change.\n\n3. Drums: click a step, right-click for an accent. Arrangement: append/reuse patterns, mix tracks, click or drag volume points; right-click deletes a point.\n\n4. Sampling: import WAV/QOA, select a region and find a stable cycle. Low-confidence audio can use a manual period. Shape and audition before applying an undoable custom waveform or wavetable frame. The full source recording is never saved in the song.\n\nSpace plays/stops. Ctrl+S saves; Ctrl+Shift+S saves as; Ctrl+O opens; Ctrl+Z undoes; Ctrl+Shift+Z redoes. F1 opens this guide.\n\nWAV/FLAC/QOA export the full arrangement. For smooth game loops, keep start/end levels and sustained notes compatible; loop markers are saved for your arrangement workflow.", "Got it");
+    private Task ShowHelp() => Ask("Make a loop", "1. Select a pattern and click a note cell. Type F, F#, F4 or F#4; Enter commits. Octave follows the nearest earlier note in that track, or 4. Arrows move; Delete clears; Esc cancels. Empty rows sustain. OFF releases; CUT stops. T / TT repeat held notes as eighth / sixteenth triplets; S swings.\n\n2. Press F2 for the FX reference. Search by name, change decimal parameters, or choose an example, then insert. A selected note cell keeps its pitch and adds or updates a same-row effect; a selected FX cell is replaced. Effects happen together, without an extra time slot. Ctrl+I hides the reference. Track → Insert instrument change adds a section header.\n\n3. Drums: click a step, right-click for an accent. Arrangement: append/reuse patterns, mix tracks, click or drag volume points; right-click deletes a point.\n\n4. Sampling: import WAV/QOA, select a region and find a stable cycle. Low-confidence audio can use a manual period. Shape and audition before applying an undoable custom waveform or wavetable frame. The full source recording is never saved in the song.\n\nSpace plays/stops. Ctrl+S saves; Ctrl+Shift+S saves as; Ctrl+O opens; Ctrl+Z undoes; Ctrl+Shift+Z redoes. F1 opens this guide. File → Open demo song opens Neon Orchard. Startup reopens your last saved project, or starts blank. Unsaved recovery is offered separately; New resets the next launch to blank.\n\nWAV/FLAC/QOA export the full arrangement. For smooth game loops, keep start/end levels and sustained notes compatible; loop markers are saved for your arrangement workflow.", "Got it");
     private static string SafeName(string name) => string.Concat(name.Select(c => Path.GetInvalidFileNameChars().Contains(c) ? '_' : c));
     private static void AtomicWrite(string path, byte[] data)
     {
         var full = Path.GetFullPath(path); Directory.CreateDirectory(Path.GetDirectoryName(full)!); var temp = full + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try { using (var stream = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None)) { stream.Write(data); stream.Flush(flushToDisk: true); } File.Move(temp, full, true); } finally { if (File.Exists(temp)) File.Delete(temp); }
     }
-    private async void ClearRecovery() { if (updateRestartApproved) return; recoveryTimer.Stop(); try { if (EditorPlatform.ClearRecoveryAsync is { } clear) await clear(); else if (File.Exists(recoveryPath)) File.Delete(recoveryPath); } catch (Exception e) { SetStatus("Recovery cleanup: " + e.Message); } }
 }

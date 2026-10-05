@@ -2,7 +2,7 @@
 
 A native, keyboard-first chiptune studio for game music, without emulating a particular sound chip. Built with .NET 11, Avalonia, and NativeAOT.
 
-Start with **Neon Orchard**, an original 30-second demo, or choose **New** to compose from an empty pattern. Nothing needs an account or internet connection.
+MusicMachine reopens your last saved project, or starts with an empty song. **File → Open demo song** opens **Neon Orchard**, an original 30-second example. Unsaved recovery is offered separately. Nothing needs an account or internet connection.
 
 ## Build and run
 
@@ -23,7 +23,7 @@ NativeAOT needs the platform's native compiler/linker prerequisites. Publishing 
 
 ## Browser build
 
-The browser uses the same Avalonia editor and synthesis engine with WebAudio playback, native browser file pickers/downloads, and IndexedDB recovery. FFmpeg remains a desktop-only optional backend.
+The browser uses the same Avalonia editor and synthesis engine with WebAudio playback, native browser file pickers/downloads, and IndexedDB recovery. An optional, same-origin FFmpeg WebAssembly runtime converts other sampling inputs; external FFmpeg export is desktop-only.
 
 ```sh
 dotnet workload install wasm-tools
@@ -42,9 +42,10 @@ Use the center selector for Tracker, Drums, Instrument, Arrangement, Automation 
 
 ## Make a loop
 
-- Click a Tracker note cell. Type `F`, `F#`, `F4`, or `F#4`, then Enter. An omitted octave follows the closest earlier note in that track, or defaults to 4. Arrows navigate; Tab changes column; Delete clears; Esc cancels an unfinished edit
+- Click a Tracker note cell. Type `F`, `F#`, `F4`, or `F#4`, then Enter. An omitted octave follows the closest earlier note in that track, or defaults to 4. Arrows navigate; Tab changes track; Delete clears; Esc cancels an unfinished edit
 - Empty rows sustain. `OFF` releases the envelope; `CUT` stops immediately. `F#4T` and `F#4TT` repeat a held note in eighth/sixteenth triplets. `F#4 S` applies swing to odd rows. Hover a cell for an explanation
 - Shift-click selects cells. Ctrl+C/Ctrl+V copy/paste tab-separated blocks transactionally. Paste rejects invalid notes and out-of-bounds blocks without partial changes
+- Press **F2** or choose **View → FX reference** to search effect names, adjust ordinary decimal parameters, see examples and insert into the selected row. The right pane can switch between this reference and the instrument editor, or collapse with Ctrl+I. Selecting a note cell preserves its pitch and adds/updates a same-row FX; selecting an FX cell replaces that cell
 - FX columns run together with the note: `A37` arpeggio, `VC0` volume, `G80` gate, `U02`/`D02` pitch slide, `R04` retrigger. The exact scales and persistence are in [format.md](docs/format.md)
 - Select a sound in the library, then **Track → Insert instrument change** to insert a section header without consuming a row. **Instrument → Make local copy** creates an independent preset and assigns it to the selected track
 - Shape amplitude/pitch envelopes, filtering and oscillators in the sound panel. Draw custom waveforms, add wavetable frames, and audition sounds
@@ -52,7 +53,7 @@ Use the center selector for Tracker, Drums, Instrument, Arrangement, Automation 
 - In **Arrangement**, reuse and reorder patterns, edit relative track trims and pans, mute/solo tracks, and draw volume automation. Playback loop markers are section boundaries
 - Space plays/stops. Ctrl+S saves, Ctrl+Shift+S saves as, Ctrl+O opens, Ctrl+Z undoes, Ctrl+Shift+Z redoes. F1 opens help
 
-The project is a self-contained binary CBOR `.song`; reusable presets are CBOR `.instrument` files. No JSON/ZIP substitution, external preset dependency, or reflection-based serializer is involved. Writes are atomic, history tracks saved content, and unsaved edits receive a recovery snapshot.
+The project is a self-contained binary CBOR `.song`; reusable presets are CBOR `.instrument` files. No JSON/ZIP substitution, external preset dependency, or reflection-based serializer is involved. Writes are atomic, history tracks saved content, and unsaved edits receive a recovery snapshot. Desktop startup remembers the saved file path; browser startup keeps a separate IndexedDB copy of the last opened/saved song. New resets the next launch to blank. Missing files fall back to blank with a notice, and retained unsaved recovery stays available in the File menu. See [startup and recovery](docs/startup.md).
 
 ## Extract a sound in Sampling
 

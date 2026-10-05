@@ -45,15 +45,19 @@ public sealed partial class MainView : UserControl
     internal Grid OverlayRoot { get; } = new();
     private string title = "MusicMachine";
     private string Title { get => title; set { title = value; if (TopLevel.GetTopLevel(this) is Window window) window.Title = value; } }
+    private readonly ProjectFileAccess? suppliedProjectFiles;
     private IStorageProvider StorageProvider => TopLevel.GetTopLevel(this)!.StorageProvider;
     private IFocusManager? FocusManager => TopLevel.GetTopLevel(this)?.FocusManager;
-    public MainView(string? initialPath = null)
+    public MainView(string? initialPath = null, ProjectFileAccess? projectFiles = null)
     {
+        suppliedProjectFiles = projectFiles;
         MinWidth = 820; MinHeight = 560; Background = Ui.Background; Foreground = Ui.Text; FontFamily = new FontFamily("avares://Avalonia.Fonts.Inter/Assets#Inter"); FontSize = 13;
-        editor = new SongEditor(DemoSong.Create());
+        editor = new SongEditor(DemoSong.CreateEmpty());
         activePattern = editor.Song.Patterns[0].Id; selectedInstrument = editor.Song.Tracks[0].InstrumentId;
         var data = Environment.GetEnvironmentVariable("MUSICMACHINE_DATA") ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MusicMachine");
         recoveryPath = Path.Combine(data, "recovery.song");
+        projectStorage = EditorPlatform.ProjectStorage ?? new DesktopProjectStorage(data);
+        projectStartup = new ProjectStartupService(projectStorage);
         LoadViewSettings(); EditorThemes.Apply(viewSettings.Theme);
         instrumentPanel = new InstrumentPanel(Change, PreviewInstrument, () => _ = ExportInstrument(), () => _ = ImportInstrument());
         samplingPanel = new SamplingPanel(ImportSamplingAudio, ApplySampledWave, PreviewSampledWave, Stop);
@@ -79,19 +83,12 @@ public sealed partial class MainView : UserControl
         KeyDown += GlobalKeyDown;
         DetachedFromVisualTree += (_, _) => { timer.Stop(); recoveryTimer.Stop(); StopUpdates(); samplingPanel.CancelWork(); player.Dispose(); };
         timer.Tick += (_, _) => TickPlayback(); timer.Start();
-        recoveryTimer.Tick += async (_, _) => { recoveryTimer.Stop(); try { if (editor.IsDirty) { var bytes = SongFile.Write(editor.Song); if (EditorPlatform.SaveRecoveryAsync is { } save) await save(bytes); else AtomicWrite(recoveryPath, bytes); } } catch (Exception e) { SetStatus("Recovery save unavailable: " + e.Message); } };
+        recoveryTimer.Tick += async (_, _) => await SaveRecoverySnapshotAsync();
         SynchronizeDrumSound(); Refresh();
         AttachedToVisualTree += async (_, _) =>
         {
             if (initialized) return; initialized = true; Title = title; RestoreInputFocus();
-            if (await RestoreUpdateSession()) { StartUpdates(); return; }
-            byte[]? recovered = null; try { recovered = EditorPlatform.LoadRecoveryAsync is { } load ? await load() : File.Exists(recoveryPath) ? File.ReadAllBytes(recoveryPath) : null; } catch (Exception e) { SetStatus("Recovery unavailable: " + e.Message); }
-            if (initialPath is not null) await OpenPath(initialPath);
-            else if (recovered is not null)
-            {
-                var answer = await Ask("Recover your song?", "A recovery copy was found from a previous session.", "Recover", "Start with demo", "Cancel");
-                if (answer == "Recover") { try { editor.Load(SongFile.Read(recovered!)); editor.MarkUnsaved(); activePattern = editor.Song.Patterns[0].Id; selectedInstrument = editor.Song.Instruments[0].Id; filePath = null; Refresh(); SetStatus("Recovered song · use Save as to keep a named copy"); } catch (Exception e) { SetStatus("Could not recover: " + e.Message); } }
-            }
+            await InitializeProjectAsync(initialPath);
             StartUpdates();
         };
     }

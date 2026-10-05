@@ -10,7 +10,7 @@ namespace MusicMachine.App;
 
 public sealed partial class MainView
 {
-    private sealed class ViewSettings { public string Theme = "catppuccin-mocha"; public bool Library = true; public bool Inspector; public bool CheckForUpdates = true; public string Workspace = "Tracker"; }
+    private sealed class ViewSettings { public string Theme = "catppuccin-mocha"; public bool Library = true; public bool Inspector; public string InspectorContent = "instrument"; public bool CheckForUpdates = true; public string Workspace = "Tracker"; public int EffectColumns = 2; }
     private readonly ViewSettings viewSettings = new();
     private Grid? panes;
     private Border? libraryPane, inspectorPane;
@@ -33,15 +33,16 @@ public sealed partial class MainView
             foreach (var line in text.Split('\n'))
             {
                 var parts = line.Split('=', 2); if (parts.Length != 2) continue;
-                switch (parts[0]) { case "checkForUpdates": viewSettings.CheckForUpdates = parts[1].Trim() != "false"; break; case "theme": viewSettings.Theme = parts[1].Trim(); break; case "library": viewSettings.Library = parts[1].Trim() != "false"; break; case "inspector": viewSettings.Inspector = parts[1].Trim() == "true"; break; case "workspace": if (new[] { "Tracker", "Drums", "Instrument", "Arrangement", "Automation", "Sampling" }.Contains(parts[1].Trim())) viewSettings.Workspace = parts[1].Trim(); break; }
+                switch (parts[0]) { case "effectColumns": if (int.TryParse(parts[1].Trim(), out var count)) viewSettings.EffectColumns = Math.Clamp(count, 0, FxParser.MaxColumns); break; case "inspectorContent": viewSettings.InspectorContent = parts[1].Trim() == "fx" ? "fx" : "instrument"; break; case "checkForUpdates": viewSettings.CheckForUpdates = parts[1].Trim() != "false"; break; case "theme": viewSettings.Theme = parts[1].Trim(); break; case "library": viewSettings.Library = parts[1].Trim() != "false"; break; case "inspector": viewSettings.Inspector = parts[1].Trim() == "true"; break; case "workspace": if (new[] { "Tracker", "Drums", "Instrument", "Arrangement", "Automation", "Sampling" }.Contains(parts[1].Trim())) viewSettings.Workspace = parts[1].Trim(); break; }
             }
             mode = viewSettings.Workspace;
         }
         catch { }
+        tracker.EffectColumns = viewSettings.EffectColumns;
     }
     private void SaveViewSettings()
     {
-        var text = $"theme={viewSettings.Theme}\nlibrary={viewSettings.Library.ToString().ToLowerInvariant()}\ninspector={viewSettings.Inspector.ToString().ToLowerInvariant()}\nworkspace={mode}\ncheckForUpdates={viewSettings.CheckForUpdates.ToString().ToLowerInvariant()}\n";
+        var text = $"theme={viewSettings.Theme}\nlibrary={viewSettings.Library.ToString().ToLowerInvariant()}\ninspector={viewSettings.Inspector.ToString().ToLowerInvariant()}\nworkspace={mode}\ncheckForUpdates={viewSettings.CheckForUpdates.ToString().ToLowerInvariant()}\ninspectorContent={viewSettings.InspectorContent}\neffectColumns={viewSettings.EffectColumns}\n";
         try { if (EditorPlatform.SavePreferences is { } save) save(text); else AtomicWrite(Path.Combine(Path.GetDirectoryName(recoveryPath)!, "view-settings.txt"), System.Text.Encoding.UTF8.GetBytes(text)); } catch (Exception e) { SetStatus("View settings: " + e.Message); }
     }
     private Control BuildShell()
@@ -63,7 +64,7 @@ public sealed partial class MainView
         libraryPicker.SelectedIndex = mode is "Instrument" or "Sampling" ? 1 : 0;
         libraryScroll.Content = libraryPicker.SelectedIndex == 1 ? library : patternList; libraryPane = Ui.Panel(libraryBody, new Thickness(0)); panes.Children.Add(libraryPane);
         Grid.SetColumn(workArea, 1); panes.Children.Add(workArea);
-        inspectorPane = Ui.Panel(inspectorHost, new Thickness(0)); inspectorPane.BorderThickness = new(1, 0, 0, 0); Grid.SetColumn(inspectorPane, 2); panes.Children.Add(inspectorPane); root.Children.Add(panes);
+        inspectorPane = Ui.Panel(BuildInspectorShell(), new Thickness(0)); inspectorPane.BorderThickness = new(1, 0, 0, 0); Grid.SetColumn(inspectorPane, 2); panes.Children.Add(inspectorPane); root.Children.Add(panes);
         status.Margin = new(10, 0); status.TextTrimming = TextTrimming.CharacterEllipsis; Grid.SetRow(status, 3); root.Children.Add(status);
         UpdatePaneLayout(); return root;
     }
@@ -74,7 +75,7 @@ public sealed partial class MainView
             var item = new MenuItem { Header = label }; item.Click += (_, _) => action(); if (shortcut is not null) item.InputGesture = KeyGesture.Parse(shortcut); return item;
         }
         MenuItem Group(string label, params Control[] items) => new() { Header = label, ItemsSource = items };
-        var file = Group("_File", Command("New song", () => _ = NewSong(), "Ctrl+N"), Command("Open…", () => _ = OpenSong(), "Ctrl+O"), Command("Save", () => _ = SaveSong(), "Ctrl+S"), Command("Save as…", () => _ = SaveSong(true), "Ctrl+Shift+S"), new Separator(), Command("Export audio…", () => _ = ExportAudio()), Command("Import instrument…", () => _ = ImportInstrument()), Command("Import audio for sampling…", () => { SelectWorkspace("Sampling"); _ = samplingPanel.ImportAsync(); }), Command("Export instrument…", () => _ = ExportInstrument()));
+        var file = Group("_File", Command("New song", () => _ = NewSong(), "Ctrl+N"), Command("Open…", () => _ = OpenSong(), "Ctrl+O"), Command("Save", () => _ = SaveSong(), "Ctrl+S"), Command("Save as…", () => _ = SaveSong(true), "Ctrl+Shift+S"), new Separator(), Command("Export audio…", () => _ = ExportAudio()), Command("Import instrument…", () => _ = ImportInstrument()), Command("Import audio for sampling…", () => { SelectWorkspace("Sampling"); _ = samplingPanel.ImportAsync(); }), Command("Export instrument…", () => _ = ExportInstrument()), new Separator(), Command("Open demo song", () => _ = LoadDemo(), "Ctrl+Shift+D"), Command("Recover unsaved song…", () => _ = RecoverSong()));
         undoMenu = Command("Undo", Undo, "Ctrl+Z"); redoMenu = Command("Redo", Redo, "Ctrl+Shift+Z");
         var edit = Group("_Edit", undoMenu, redoMenu, Command("Copy tracker cells", () => _ = tracker.CopySelectionAsync(), "Ctrl+C"), Command("Paste tracker cells", () => _ = tracker.PasteSelectionAsync(), "Ctrl+V"), new Separator(), Command("Song settings…", () => _ = EditSongSettings()), Command("Rename song…", () => _ = EditText("Rename song", editor.Song.Title, t => Change(s => s.Title = t))));
         libraryMenu = Command("Library pane", () => TogglePane(true), "Ctrl+L"); inspectorMenu = Command("Inspector pane", () => TogglePane(false), "Ctrl+I");
@@ -82,7 +83,8 @@ public sealed partial class MainView
         var workspace = Group("Center workspace", new[] { "Tracker", "Drums", "Instrument", "Arrangement", "Automation", "Sampling" }.Select(name => Command(name, () => SelectWorkspace(name))).ToArray());
         var themes = Group("Theme", EditorThemes.All.Select(theme => { var item = Command(theme.Name, () => ApplyTheme(theme.Id)); item.ToggleType = MenuItemToggleType.Radio; themeItems.Add((item, theme.Id)); return item; }).ToArray());
         var effects = Group("FX columns", new[] { 0, 1, 2, 4, 6 }.Select(n => Command(n == 0 ? "Hide FX" : n.ToString(), () => SetEffectColumns(n))).ToArray());
-        var view = Group("_View", libraryMenu, inspectorMenu, workspace, themes, effects);
+        fxReferenceMenu = Command("FX reference", ShowFxReference, "F2"); fxReferenceMenu.ToggleType = MenuItemToggleType.CheckBox;
+        var view = Group("_View", libraryMenu, inspectorMenu, fxReferenceMenu, workspace, themes, effects);
         var pattern = Group("_Pattern", Command("New pattern", AddPattern), Command("Duplicate pattern", DuplicatePattern), Command("Rename pattern…", () => _ = EditText("Rename pattern", editor.Song.FindPattern(activePattern)!.Name, t => Change(s => s.FindPattern(activePattern)!.Name = t))), Command("Pattern length…", () => _ = EditText("Pattern rows (4–256)", editor.Song.FindPattern(activePattern)!.Length.ToString(), t => { if (int.TryParse(t, out var n)) ResizePattern(Math.Clamp(n, 4, 256)); })), new Separator(), Command("Four-on-the-floor drums", () => ApplyDrumPreset(false)), Command("Broken beat drums", () => ApplyDrumPreset(true)), Command("Clear drum steps", () => Change(s => { foreach (var lane in s.FindPattern(activePattern)!.Drums) lane.Steps = Enumerable.Repeat((byte)0, s.FindPattern(activePattern)!.Length).ToList(); })));
         var track = Group("_Track", Command("Add track", AddTrack), Command("Move / remove selected track…", () => _ = TrackOptions(chosenTrack)), Command("Insert instrument change", SetInstrumentEvent));
         var instrument = Group("_Instrument", Command("New instrument", AddInstrument), Command("Make local copy", MakeLocal), Command("Edit in center", () => SelectWorkspace("Instrument")), Command("Sample a waveform", () => SelectWorkspace("Sampling")), Command("Audition", PreviewInstrument));
@@ -93,6 +95,7 @@ public sealed partial class MainView
     private void RefreshChrome()
     {
         if (projectLabel is not null) projectLabel.Text = editor.Song.Title;
+        UpdateReferenceContext();
         workspacePicker.SelectedItem = mode;
         if (mode is "Tracker" or "Drums") { centerItemPicker.IsVisible = true; centerItemPicker.ItemsSource = editor.Song.Patterns.Select(p => p.Name).ToArray(); centerItemPicker.SelectedIndex = editor.Song.Patterns.FindIndex(p => p.Id == activePattern); }
         else if (mode is "Instrument" or "Sampling") { centerItemPicker.IsVisible = true; centerItemPicker.ItemsSource = editor.Song.Instruments.Select(i => i.Name).ToArray(); centerItemPicker.SelectedIndex = editor.Song.Instruments.FindIndex(i => i.Id == selectedInstrument); }
@@ -107,7 +110,9 @@ public sealed partial class MainView
     {
         if (!tracker.CommitPending()) return;
         var row = tracker.SelectedRow; var track = tracker.SelectedTrack; var column = tracker.SelectedColumn;
-        tracker.EffectColumns = count; tracker.SetSong(editor.Song, activePattern); tracker.Select(row, track, Math.Min(column, count)); UpdateSelection(); RestoreInputFocus();
+        count = Math.Clamp(count, 0, FxParser.MaxColumns);
+        tracker.EffectColumns = viewSettings.EffectColumns = count;
+        tracker.SetSong(editor.Song, activePattern); tracker.Select(row, track, Math.Min(column, count)); UpdateSelection(); SaveViewSettings(); RestoreInputFocus();
     }
     private void SelectWorkspace(string name)
     {
@@ -118,16 +123,23 @@ public sealed partial class MainView
         if (mode != "Drums") return; var lanes = editor.Song.FindPattern(activePattern)?.Drums;
         if (lanes is { Count: > 0 }) selectedInstrument = lanes[Math.Clamp(selectedDrumLane, 0, lanes.Count - 1)].InstrumentId;
     }
-    private void TogglePane(bool left) { if (left) viewSettings.Library = !viewSettings.Library; else viewSettings.Inspector = !viewSettings.Inspector; UpdatePaneLayout(); SaveViewSettings(); RefreshChrome(); }
+    private void TogglePane(bool left) { if (left) viewSettings.Library = !viewSettings.Library; else viewSettings.Inspector = !viewSettings.Inspector; UpdatePaneLayout(); SaveViewSettings(); RefreshChrome(); if (!left && !viewSettings.Inspector) RestoreInputFocus(); }
     private void UpdatePaneLayout()
     {
-        if (panes is null) return; var inspect = viewSettings.Inspector && mode != "Instrument";
+        if (panes is null) return; var inspect = viewSettings.Inspector && (mode != "Instrument" || ShowingFxReference);
         panes.ColumnDefinitions[0].Width = new GridLength(viewSettings.Library ? 180 : 0); panes.ColumnDefinitions[2].Width = new GridLength(inspect ? 248 : 0);
         if (libraryPane is not null) libraryPane.IsVisible = viewSettings.Library; if (inspectorPane is not null) inspectorPane.IsVisible = inspect;
     }
     private void PrepareInspector()
     {
-        Ui.Detach(instrumentPanel); instrumentPanel.SetWideLayout(mode == "Instrument"); if (mode != "Instrument") inspectorHost.Content = instrumentPanel; UpdatePaneLayout();
+        Ui.Detach(instrumentPanel); instrumentPanel.SetWideLayout(mode == "Instrument");
+        if (ShowingFxReference)
+        {
+            fxReferencePanel ??= new FxReferencePanel(InsertReferenceEffect);
+            if (!ReferenceEquals(inspectorHost.Content, fxReferencePanel)) { Ui.Detach(fxReferencePanel); inspectorHost.Content = fxReferencePanel; }
+        }
+        else inspectorHost.Content = mode != "Instrument" ? instrumentPanel : null;
+        UpdateReferenceContext(); UpdatePaneLayout();
     }
     private Control BuildInstrumentWorkspace() => new ScrollViewer { Content = instrumentPanel, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, Margin = new(12, 8) };
     private Control BuildTracker()

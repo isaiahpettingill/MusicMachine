@@ -1,6 +1,6 @@
 import { dotnet } from './_framework/dotnet.js';
 import { createAudioBridge } from './audio.js';
-import { createRecoveryStore } from './recovery.js';
+import { createProjectStore } from './recovery.js';
 import { createAudioConverter } from './conversion.js';
 
 
@@ -30,7 +30,7 @@ window.addEventListener('pagehide', () => conversion.dispose());
 
 try {
     const runtime = await dotnet.withDiagnosticTracing(false).create();
-    runtime.setModuleImports('musicmachine', { audio, recovery: createRecoveryStore(), preferences, conversion });
+    runtime.setModuleImports('musicmachine', { audio, projectStorage: createProjectStore(), preferences, conversion });
     await runtime.runMain(runtime.getConfig().mainAssemblyName, [globalThis.location.href]);
     // An observable lifecycle signal, not a test-only substitute for UI readiness.
     document.documentElement.dataset.musicmachineReady = 'true';

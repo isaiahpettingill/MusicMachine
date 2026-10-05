@@ -14,13 +14,7 @@ internal static partial class Program
         EditorPlatform.LoadPreferences = LoadPreferences;
         EditorPlatform.SavePreferences = SavePreferences;
         AudioServices.CreatePlayer = static () => new BrowserAudioPlayer();
-        EditorPlatform.LoadRecoveryAsync = async () =>
-        {
-            string? saved = await LoadRecovery();
-            return saved is null ? null : Convert.FromBase64String(saved);
-        };
-        EditorPlatform.SaveRecoveryAsync = bytes => SaveRecovery(Convert.ToBase64String(bytes));
-        EditorPlatform.ClearRecoveryAsync = ClearRecovery;
+        EditorPlatform.ProjectStorage = new BrowserProjectStorage();
         EditorPlatform.ConvertAudioToWaveAsync = BrowserAudioConverter.ConvertAsync;
         return AppBuilder.Configure<MusicMachine.App.App>()
             .WithInterFont()
@@ -32,10 +26,4 @@ internal static partial class Program
     [JSImport("preferences.save", "musicmachine")]
     private static partial void SavePreferences(string text);
 
-    [JSImport("recovery.load", "musicmachine")]
-    private static partial Task<string?> LoadRecovery();
-    [JSImport("recovery.save", "musicmachine")]
-    private static partial Task SaveRecovery(string base64);
-    [JSImport("recovery.clear", "musicmachine")]
-    private static partial Task ClearRecovery();
 }

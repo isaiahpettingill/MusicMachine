@@ -207,7 +207,7 @@ public sealed partial class MainView
             recoveryTimer.Stop();
             // Snapshot every song, including clean songs and untitled demos. Neither snapshot is consumed on restart.
             UpdateRecovery.Save(editor, filePath is null ? null : Path.GetFullPath(filePath), activePattern, selectedInstrument, mode, directory);
-            AtomicWrite(recoveryPath, SongFile.Write(editor.Song));
+            await WriteUpdateRecoveryAsync(SongFile.Write(editor.Song));
             await UpdateInstaller.LaunchHelper(plan, directory, operation.Token);
             operation.Token.ThrowIfCancellationRequested();
             // This is the only path allowed to bypass the ordinary discard dialog or its recovery cleanup.
@@ -257,7 +257,7 @@ public sealed partial class MainView
             if (session.Workspace is "Tracker" or "Drums" or "Instrument" or "Arrangement" or "Automation" or "Sampling") mode = session.Workspace;
             chosenTrack = 0; Refresh(); restored = true;
             // Reassert the plain recovery copy too; a later crash can recover without a resume argument.
-            AtomicWrite(recoveryPath, session.SongBytes);
+            await WriteUpdateRecoveryAsync(session.SongBytes);
             await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() => UpdateInstaller.Complete(fullPlan, AppContext.BaseDirectory), Avalonia.Threading.DispatcherPriority.Background);
             if (ReadUpdateFailure(directory) is { } failure)
             {

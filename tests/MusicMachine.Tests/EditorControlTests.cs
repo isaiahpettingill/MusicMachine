@@ -120,6 +120,9 @@ public sealed class EditorControlTests
             EditorThemes.ThemeChanged -= onThemeChanged;
             EditorThemes.Apply(EditorThemes.Default);
         }
+        StartupUiRegressionChecks.Run();
+        FxReferencePanelChecks.Run();
+        FxReferenceIntegrationChecks.Run();
         UpdateUiRegressionChecks.Run();
     }
 }

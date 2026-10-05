@@ -22,7 +22,6 @@ internal static class UpdateUiRegressionChecks
         var previousTheme = EditorThemes.Current.Id;
         var previousPreferences = EditorPlatform.LoadPreferences;
         var previousSave = EditorPlatform.SavePreferences;
-        var previousRecovery = EditorPlatform.ClearRecoveryAsync;
         var views = new List<MainView>();
         try
         {
@@ -30,7 +29,6 @@ internal static class UpdateUiRegressionChecks
             string preferences = "theme=dark\nlibrary=false\ninspector=true\nworkspace=Sampling\ncheckForUpdates=false\n";
             EditorPlatform.LoadPreferences = () => preferences;
             EditorPlatform.SavePreferences = text => preferences = text;
-            EditorPlatform.ClearRecoveryAsync = null;
             UpdateHost.DesktopEnabled = false;
             var nonDesktop = new MainView(); views.Add(nonDesktop);
             Assert.Null(Field<MenuItem?>(nonDesktop, "updateMenu"));
@@ -94,6 +92,7 @@ internal static class UpdateUiRegressionChecks
             song.Change(s => s.Title = "Unsaved update recovery");
             SongFile.Save(recovery, song.Song);
             var snapshot = File.ReadAllBytes(recovery);
+            Set(desktop, "sessionRecoveryKey", "song");
             // Approved restart preserves even dirty songs and never opens a discard prompt.
             Set(desktop, "updateRestartApproved", true);
             Assert.True(desktop.RequestCloseAsync().GetAwaiter().GetResult());
@@ -125,7 +124,6 @@ internal static class UpdateUiRegressionChecks
             }
             UpdateHost.DesktopEnabled = previousDesktop; EditorThemes.Apply(previousTheme);
             EditorPlatform.LoadPreferences = previousPreferences; EditorPlatform.SavePreferences = previousSave;
-            EditorPlatform.ClearRecoveryAsync = previousRecovery;
             Environment.SetEnvironmentVariable("MUSICMACHINE_DATA", previousData);
             Directory.Delete(directory, true);
         }
