@@ -1,6 +1,7 @@
 import { dotnet } from './_framework/dotnet.js';
 import { createAudioBridge } from './audio.js';
 import { createRecoveryStore } from './recovery.js';
+import { createAudioConverter } from './conversion.js';
 
 
 function applyViewTheme(text) {
@@ -24,12 +25,18 @@ document.addEventListener('keydown', () => void audio.unlock(), { capture: true 
 document.getElementById('enable-audio').addEventListener('click', () => void audio.unlock());
 document.getElementById('dismiss-audio').addEventListener('click', () => { notice.hidden = true; });
 window.addEventListener('pagehide', () => audio.stopAll());
+const conversion = createAudioConverter();
+window.addEventListener('pagehide', () => conversion.dispose());
 
 try {
     const runtime = await dotnet.withDiagnosticTracing(false).create();
-    runtime.setModuleImports('musicmachine', { audio, recovery: createRecoveryStore(), preferences });
+    runtime.setModuleImports('musicmachine', { audio, recovery: createRecoveryStore(), preferences, conversion });
     await runtime.runMain(runtime.getConfig().mainAssemblyName, [globalThis.location.href]);
+    // An observable lifecycle signal, not a test-only substitute for UI readiness.
+    document.documentElement.dataset.musicmachineReady = 'true';
+    window.dispatchEvent(new Event('musicmachine-ready'));
 } catch (error) {
+    document.documentElement.dataset.musicmachineReady = 'failed';
     console.error('MusicMachine startup failed', error);
     const status = document.getElementById('loading-status');
     if (status) status.textContent = 'MusicMachine could not start. Reload this page or try a current Chrome, Edge, Firefox or Safari browser.';

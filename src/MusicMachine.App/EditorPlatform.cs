@@ -7,4 +7,6 @@ public static class EditorPlatform
     public static Func<Task<byte[]?>>? LoadRecoveryAsync { get; set; }
     public static Func<byte[], Task>? SaveRecoveryAsync { get; set; }
     public static Func<Task>? ClearRecoveryAsync { get; set; }
+    // Optional host converter. Native WAV/QOA imports bypass this hook entirely.
+    public static Func<string, byte[], CancellationToken, Task<byte[]>>? ConvertAudioToWaveAsync { get; set; }
 }

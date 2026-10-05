@@ -72,6 +72,7 @@ public sealed class EditorControlTests
         slider.RaiseEvent(new KeyEventArgs { RoutedEvent = InputElement.KeyUpEvent, Key = Key.Right }); Assert.Equal(5, edits); Assert.Equal(-14, instrument.VolumeDb);
         Named<ComboBox>("VoiceKindSelector").SelectedIndex = 1; Assert.Equal(6, edits); Assert.Equal(DrumKind.Kick, instrument.Drum); Assert.True(instrument.IsLocal);
         panel.ShowInstrument(song, null); Assert.Equal(6, edits);
+        SamplingControlTests.Run();
 
         // Repeated theme changes preserve brush identity and editor state, including
         // switching back and forth between Fluent's light and dark variants.
@@ -119,5 +120,6 @@ public sealed class EditorControlTests
             EditorThemes.ThemeChanged -= onThemeChanged;
             EditorThemes.Apply(EditorThemes.Default);
         }
+        UpdateUiRegressionChecks.Run();
     }
 }

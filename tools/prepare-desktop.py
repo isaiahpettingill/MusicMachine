@@ -46,7 +46,7 @@ def prepare(payload: Path, runtime: str):
             if len(matches) != 1:
                 raise ValueError("Expected one SDL2.dll in official x64 archive")
             (payload / "SDL2.dll").write_bytes(archive.read(matches[0]))
-    metadata = {"schema": 1, "product": "MusicMachine", "version": version, "runtime": runtime,
+    metadata = {"schema": 1, "updaterProtocol": 1, "product": "MusicMachine", "version": version, "runtime": runtime,
                 "commit": os.environ.get("GITHUB_SHA", ""), "executable": executable,
                 "repository": os.environ.get("GITHUB_REPOSITORY", "isaiahpettingill/MusicMachine")}
     (payload / "release.json").write_text(json.dumps(metadata, indent=2) + "\n")

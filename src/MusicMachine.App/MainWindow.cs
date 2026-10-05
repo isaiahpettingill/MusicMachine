@@ -16,6 +16,7 @@ public sealed partial class MainView : UserControl
     private readonly IAudioPlayer player = AudioServices.CreatePlayer();
     private readonly TrackerGrid tracker = new();
     private readonly InstrumentPanel instrumentPanel;
+    private readonly SamplingPanel samplingPanel;
     private readonly StackPanel library = new() { Spacing = 3 }, patternList = new() { Spacing = 3 };
     private readonly ContentControl workArea = new();
     private readonly Dictionary<string, Button> tabButtons = [];
@@ -55,6 +56,7 @@ public sealed partial class MainView : UserControl
         recoveryPath = Path.Combine(data, "recovery.song");
         LoadViewSettings(); EditorThemes.Apply(viewSettings.Theme);
         instrumentPanel = new InstrumentPanel(Change, PreviewInstrument, () => _ = ExportInstrument(), () => _ = ImportInstrument());
+        samplingPanel = new SamplingPanel(ImportSamplingAudio, ApplySampledWave, PreviewSampledWave, Stop);
         playButton = Ui.IconButton(PackIconMaterialKind.Play, TogglePlay, "Play / stop · Space");
         undoButton = Ui.Button("Undo", () => Undo(), "Undo · Ctrl+Z"); redoButton = Ui.Button("Redo", () => Redo(), "Redo · Ctrl+Shift+Z");
         tempo = Number(editor.Song.Bpm, 20, 400, 1, 76, v => Change(s => s.Bpm = v), "0");
@@ -75,13 +77,14 @@ public sealed partial class MainView : UserControl
         cellEntry.KeyDown += (_, e) => { if (e.Key == Key.Enter) { if (tracker.CommitText(cellEntry.Text ?? "")) { tracker.Select(tracker.SelectedRow + 1, tracker.SelectedTrack, tracker.SelectedColumn); UpdateSelection(); tracker.Focus(); } e.Handled = true; } };
         OverlayRoot.Children.Add(BuildShell()); Content = OverlayRoot;
         KeyDown += GlobalKeyDown;
-        DetachedFromVisualTree += (_, _) => { timer.Stop(); recoveryTimer.Stop(); player.Dispose(); };
+        DetachedFromVisualTree += (_, _) => { timer.Stop(); recoveryTimer.Stop(); StopUpdates(); samplingPanel.CancelWork(); player.Dispose(); };
         timer.Tick += (_, _) => TickPlayback(); timer.Start();
         recoveryTimer.Tick += async (_, _) => { recoveryTimer.Stop(); try { if (editor.IsDirty) { var bytes = SongFile.Write(editor.Song); if (EditorPlatform.SaveRecoveryAsync is { } save) await save(bytes); else AtomicWrite(recoveryPath, bytes); } } catch (Exception e) { SetStatus("Recovery save unavailable: " + e.Message); } };
         SynchronizeDrumSound(); Refresh();
         AttachedToVisualTree += async (_, _) =>
         {
             if (initialized) return; initialized = true; Title = title; RestoreInputFocus();
+            if (await RestoreUpdateSession()) { StartUpdates(); return; }
             byte[]? recovered = null; try { recovered = EditorPlatform.LoadRecoveryAsync is { } load ? await load() : File.Exists(recoveryPath) ? File.ReadAllBytes(recoveryPath) : null; } catch (Exception e) { SetStatus("Recovery unavailable: " + e.Message); }
             if (initialPath is not null) await OpenPath(initialPath);
             else if (recovered is not null)
@@ -89,6 +92,7 @@ public sealed partial class MainView : UserControl
                 var answer = await Ask("Recover your song?", "A recovery copy was found from a previous session.", "Recover", "Start with demo", "Cancel");
                 if (answer == "Recover") { try { editor.Load(SongFile.Read(recovered!)); editor.MarkUnsaved(); activePattern = editor.Song.Patterns[0].Id; selectedInstrument = editor.Song.Instruments[0].Id; filePath = null; Refresh(); SetStatus("Recovered song · use Save as to keep a named copy"); } catch (Exception e) { SetStatus("Could not recover: " + e.Message); } }
             }
+            StartUpdates();
         };
     }
     private void Refresh(bool preserveTracker = false)
@@ -113,7 +117,7 @@ public sealed partial class MainView : UserControl
                 var row = new Grid { ColumnDefinitions = new("*,Auto") }; var button = Ui.Button(pattern.Name, () => { if (tracker.CommitPending()) { activePattern = pattern.Id; SynchronizeDrumSound(); Refresh(); } }); button.HorizontalAlignment = HorizontalAlignment.Stretch; button.HorizontalContentAlignment = HorizontalAlignment.Left; button.FontSize = 11;
                 if (pattern.Id == activePattern) button.Classes.Add("selected"); row.Children.Add(button); var count = Ui.Label($"{pattern.Length}", 10, Ui.Muted); count.Margin = new(4); Grid.SetColumn(count, 1); row.Children.Add(count); patternList.Children.Add(row);
             }
-            RefreshChrome();
+            RefreshChrome(); samplingPanel.SetTarget(song.FindInstrument(selectedInstrument)?.Name ?? "selected instrument");
             tracker.SetSong(song, activePattern); instrumentPanel.ShowInstrument(song, selectedInstrument); if (!(preserveTracker && mode == "Tracker")) RefreshWorkspace(); UpdateSelection();
         }
         finally { refreshing = false; }
@@ -124,7 +128,7 @@ public sealed partial class MainView : UserControl
         if (WorkspaceScroll(workArea.Content) is { } previous) workspaceOffsets[displayedMode] = previous.Offset;
         workArea.Content = null;
         PrepareInspector();
-        var content = mode switch { "Arrangement" => BuildArrangement(), "Drums" => BuildDrums(), "Instrument" => BuildInstrumentWorkspace(), "Automation" => BuildAutomationWorkspace(), _ => BuildTracker() };
+        var content = mode switch { "Arrangement" => BuildArrangement(), "Drums" => BuildDrums(), "Instrument" => BuildInstrumentWorkspace(), "Automation" => BuildAutomationWorkspace(), "Sampling" => BuildSamplingWorkspace(), _ => BuildTracker() };
         displayedMode = mode; workArea.Content = content;
         if (WorkspaceScroll(content) is { } scroll)
         {

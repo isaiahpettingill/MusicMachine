@@ -96,6 +96,12 @@ Stable drum values: `0 None`, `1 Kick`, `2 Snare`, `3 ClosedHat`, `4 OpenHat`, `
 
 Factory presets are freshly allocated by `InstrumentLibrary.CreatePresets()`. `CreateLocalCopy()` round-trips the binary codec, issues a new ID, and marks the copy local. Neither parameter edits nor waveform-array edits to a local instrument can modify a global preset or another song. `ImportToSong()` adds such an independent copy. The `IsLocal` flag is a UI provenance hint; every song embeds every definition regardless of this flag.
 
+## Sampling extraction
+
+The Sampling workspace adds no schema keys and no external-file references. It imports a bounded clip into transient UI state, selects and resamples a representative single period to 128 signed PCM16 samples, removes DC, repairs the seam and offers reversible shaping. Applying commits either `CustomWave` or a new `Wavetable` frame through the same validated `SongEditor.Change` transaction and history as hand-drawn waves. The original audio, file path, selection and pitch-analysis confidence are not serialized. Instruments remain self-contained and compatible with the existing schema version.
+
+Pitch detection is a bounded monophonic estimate, not transcription. A manual period can produce a new timbre from unpitched material. Extracted waveforms are synthesized at the note's requested pitch; they never promise preservation of the original recording or its duration.
+
 ## Tracks, patterns and arrangement
 
 Track map: `0 ID`, `1 name`, `2 default instrument ID`, `3 volume dB`, `4 pan`, `5 muted`, `6 solo`, `7 #RRGGBB color`, `8 automation array`. Each automation point is `[absolute song row, additional dB]`; rows are unique and strictly increasing. The engine interpolates dB between points and smooths gain changes.

@@ -2,5 +2,13 @@
   "name": "musicmachine-browser-host",
   "private": true,
   "type": "module",
-  "scripts": { "test": "node --test tests/*.test.js" }
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "vendor:ffmpeg": "node tools/vendor-ffmpeg.mjs",
+    "test:runtime": "node --test tools/test-conversion-runtime.mjs",
+    "test:browser": "node tools/smoke-conversion-browser.mjs",
+    "build:ffmpeg": "bash tools/build-ffmpeg-audio.sh",
+    "verify:distribution": "node tools/verify-converter-distribution.mjs",
+    "test:formats": "node tools/test-audio-formats.mjs"
+  }
 }

@@ -27,4 +27,10 @@
     </ItemGroup>
     <Error Condition="!Exists('$(SkiaSharpStaticLibraryPath)/5.0.6/st,simd/libSkiaSharp.a')" Text="The .NET 11 Skia WebAssembly archive was not found. Restore browser package dependencies." />
   </Target>
+  <!-- Optional converter is generated explicitly. Verify its accompanying
+       source/relink bundle and notices rather than silently shipping old cores. -->
+  <Target Name="VerifyAudioConverterDistribution" BeforeTargets="PrepareForPublish"
+          Condition="Exists('$(MSBuildProjectDirectory)/wwwroot/vendor/ffmpeg')">
+    <Exec WorkingDirectory="$(MSBuildProjectDirectory)" Command="node tools/verify-converter-distribution.mjs" />
+  </Target>
 </Project>

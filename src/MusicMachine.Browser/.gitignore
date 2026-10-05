@@ -1,0 +1,4 @@
+# Reproducible local/build outputs; source and notices are generated beside the core.
+wwwroot/vendor/ffmpeg/
+
+.ffmpeg-build/

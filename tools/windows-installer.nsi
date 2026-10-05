@@ -31,6 +31,28 @@ VIAddVersionKey "LegalCopyright" "MIT License"
 !insertmacro MUI_UNPAGE_INSTFILES
 !insertmacro MUI_LANGUAGE "English"
 
+!macro RequireUnelevatedToken LABEL
+  ; RequestExecutionLevel user does not remove elevation inherited from a shell.
+  ; Query the process token itself, and fail closed if Windows cannot inspect it.
+  System::Call 'kernel32::GetCurrentProcess() p .r0'
+  System::Call 'advapi32::OpenProcessToken(p r0, i 0x0008, *p .r1) i .r2'
+  ${If} $2 == 0
+    Goto token_refused_${LABEL}
+  ${EndIf}
+  System::Call 'advapi32::GetTokenInformation(p r1, i 20, *i .r3, i 4, *i .r4) i .r2'
+  System::Call 'kernel32::CloseHandle(p r1)'
+  ${If} $2 != 0
+  ${AndIf} $4 == 4
+  ${AndIf} $3 == 0
+    Goto token_allowed_${LABEL}
+  ${EndIf}
+  token_refused_${LABEL}:
+    MessageBox MB_OK|MB_ICONSTOP "Run MusicMachine setup or uninstall as your normal Windows user. Elevated execution is not supported." /SD IDOK
+    SetErrorLevel 2
+    Quit
+  token_allowed_${LABEL}:
+!macroend
+
 !macro CheckAppClosed
   ${If} ${FileExists} "$INSTDIR\MusicMachine.Desktop.exe"
     System::Call 'kernel32::CreateFileW(w "$INSTDIR\MusicMachine.Desktop.exe", i 0x40000000, i 0, p 0, i 3, i 0, p 0) p .r0'
@@ -42,6 +64,9 @@ VIAddVersionKey "LegalCopyright" "MIT License"
     System::Call 'kernel32::CloseHandle(p r0)'
   ${EndIf}
 !macroend
+Var StageOnly
+Var RegisterOnly
+
 Var CheckedEntries
 
 Function RefuseInstallDirectory
@@ -210,12 +235,51 @@ Function CheckInstallDirectory
       Return
     ${EndIf}
   ${EndIf}
+  ; An old install copied by protocol 1 has no ownership marker yet. Its stage
+  ; directory and token must agree with the registered source installation.
+  ${If} $StageOnly == 1
+  ${AndIf} $0 != ""
+    ClearErrors
+    FileOpen $1 "$INSTDIR\.update-token" r
+    ${IfNot} ${Errors}
+      FileRead $1 $2 64
+      FileClose $1
+      StrLen $3 $2
+      ${If} $3 == 32
+      ${AndIf} $INSTDIR == "$0.update-$2"
+      ${AndIf} ${FileExists} "$0\MusicMachine.Desktop.exe"
+      ${AndIf} ${FileExists} "$0\release.json"
+      ${AndIf} ${FileExists} "$0\Uninstall.exe"
+        Return
+      ${EndIf}
+    ${EndIf}
+  ${EndIf}
   refuse_directory:
     Call RefuseInstallDirectory
 FunctionEnd
 
 Function .onInit
+  !insertmacro RequireUnelevatedToken install
   SetShellVarContext current
+  SetRegView 32
+  ${GetParameters} $0
+  ClearErrors
+  ${GetOptions} $0 "/STAGE" $1
+  ${IfNot} ${Errors}
+    StrCpy $StageOnly 1
+    SetSilent silent
+  ${EndIf}
+  ClearErrors
+  ${GetOptions} $0 "/REGISTER" $1
+  ${IfNot} ${Errors}
+    StrCpy $RegisterOnly 1
+    SetSilent silent
+  ${EndIf}
+  ${If} $StageOnly == 1
+  ${AndIf} $RegisterOnly == 1
+    SetErrorLevel 2
+    Quit
+  ${EndIf}
   ${IfNot} ${RunningX64}
     MessageBox MB_OK|MB_ICONSTOP "MusicMachine requires 64-bit Windows." /SD IDOK
     SetErrorLevel 2
@@ -223,41 +287,57 @@ Function .onInit
   ${EndIf}
 FunctionEnd
 Section "MusicMachine"
-  Call CheckInstallDirectory
-  !insertmacro CheckAppClosed
-  ClearErrors
-  SetOverwrite on
-  !include "${INSTALL_FILES}"
-  SetOutPath "$INSTDIR"
-  WriteUninstaller "$INSTDIR\Uninstall.exe"
-  FileOpen $0 "$INSTDIR\.installer-owned" w
-  FileWrite $0 "MusicMachine per-user Windows installation v1"
-  FileClose $0
-  ${If} ${Errors}
-    MessageBox MB_OK|MB_ICONSTOP "Installation failed. Close MusicMachine and try again." /SD IDOK
-    SetErrorLevel 2
-    Abort
+  ${If} $RegisterOnly != 1
+    Call CheckInstallDirectory
+    !insertmacro CheckAppClosed
+    ClearErrors
+    SetOverwrite on
+    !include "${INSTALL_FILES}"
+    SetOutPath "$INSTDIR"
+    WriteUninstaller "$INSTDIR\Uninstall.exe"
+    FileOpen $0 "$INSTDIR\.installer-owned" w
+    FileWrite $0 "MusicMachine per-user Windows installation v1"
+    FileClose $0
+    ${If} ${Errors}
+      MessageBox MB_OK|MB_ICONSTOP "Installation failed. Close MusicMachine and try again." /SD IDOK
+      SetErrorLevel 2
+      Abort
+    ${EndIf}
   ${EndIf}
-  WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayName" "MusicMachine"
-  WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayVersion" "${VERSION}"
-  WriteRegStr HKCU "${UNINSTALL_KEY}" "Publisher" "Isaiah Pettingill"
-  WriteRegStr HKCU "${UNINSTALL_KEY}" "InstallLocation" "$INSTDIR"
-  WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayIcon" "$INSTDIR\musicmachine.ico"
-  WriteRegStr HKCU "${UNINSTALL_KEY}" "UninstallString" '$\"$INSTDIR\Uninstall.exe$\"'
-  WriteRegStr HKCU "${UNINSTALL_KEY}" "QuietUninstallString" '$\"$INSTDIR\Uninstall.exe$\" /S'
-  WriteRegStr HKCU "${UNINSTALL_KEY}" "URLInfoAbout" "https://github.com/isaiahpettingill/MusicMachine"
-  WriteRegDWORD HKCU "${UNINSTALL_KEY}" "EstimatedSize" ${SIZE_KB}
-  WriteRegDWORD HKCU "${UNINSTALL_KEY}" "NoModify" 1
-  WriteRegDWORD HKCU "${UNINSTALL_KEY}" "NoRepair" 1
-  CreateShortcut "$SMPROGRAMS\MusicMachine.lnk" "$INSTDIR\MusicMachine.Desktop.exe" "" "$INSTDIR\musicmachine.ico"
-  ${If} ${Errors}
-    SetErrorLevel 2
-    Abort
+  ${If} $StageOnly != 1
+    ${IfNot} ${FileExists} "$INSTDIR\MusicMachine.Desktop.exe"
+      SetErrorLevel 2
+      Abort
+    ${EndIf}
+    ${IfNot} ${FileExists} "$INSTDIR\Uninstall.exe"
+      SetErrorLevel 2
+      Abort
+    ${EndIf}
+    ClearErrors
+    WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayName" "MusicMachine"
+    WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayVersion" "${VERSION}"
+    WriteRegStr HKCU "${UNINSTALL_KEY}" "Publisher" "Isaiah Pettingill"
+    WriteRegStr HKCU "${UNINSTALL_KEY}" "InstallLocation" "$INSTDIR"
+    WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayIcon" "$INSTDIR\musicmachine.ico"
+    WriteRegStr HKCU "${UNINSTALL_KEY}" "UninstallString" '$\"$INSTDIR\Uninstall.exe$\"'
+    WriteRegStr HKCU "${UNINSTALL_KEY}" "QuietUninstallString" '$\"$INSTDIR\Uninstall.exe$\" /S'
+    WriteRegStr HKCU "${UNINSTALL_KEY}" "URLInfoAbout" "https://github.com/isaiahpettingill/MusicMachine"
+    WriteRegDWORD HKCU "${UNINSTALL_KEY}" "EstimatedSize" ${SIZE_KB}
+    WriteRegDWORD HKCU "${UNINSTALL_KEY}" "NoModify" 1
+    WriteRegDWORD HKCU "${UNINSTALL_KEY}" "NoRepair" 1
+    SetOutPath "$INSTDIR"
+    CreateShortcut "$SMPROGRAMS\MusicMachine.lnk" "$INSTDIR\MusicMachine.Desktop.exe" "" "$INSTDIR\musicmachine.ico"
+    ${If} ${Errors}
+      SetErrorLevel 2
+      Abort
+    ${EndIf}
   ${EndIf}
   SetErrorLevel 0
 SectionEnd
 Function un.onInit
+  !insertmacro RequireUnelevatedToken uninstall
   SetShellVarContext current
+  SetRegView 32
 FunctionEnd
 Section "Uninstall"
   !insertmacro CheckAppClosed

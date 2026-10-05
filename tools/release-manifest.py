@@ -6,7 +6,7 @@ from pathlib import Path
 import sys
 
 REQUIRED = ["MusicMachine-win-x64-setup.exe", "MusicMachine-win-x64.zip",
-            "MusicMachine-linux-x64.tar.gz", "install-musicmachine.sh",
+            "MusicMachine-linux-x64.tar.gz", "install-musicmachine.sh", "install-musicmachine.ps1",
             "MusicMachine-browser-wasm.zip", "MusicMachine-source.zip"]
 
 
@@ -21,7 +21,7 @@ def create(directory: Path):
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
         assets.append({"name": name, "size": path.stat().st_size, "sha256": digest,
                        "url": f"https://github.com/{repository}/releases/download/v{version}/{name}"})
-    (directory / "release.json").write_text(json.dumps({"schema": 1, "product": "MusicMachine",
+    (directory / "release.json").write_text(json.dumps({"schema": 1, "updaterProtocol": 1, "product": "MusicMachine",
         "version": version, "commit": os.environ["GITHUB_SHA"], "assets": assets}, indent=2) + "\n")
     (directory / "SHA256SUMS").write_text("".join(f"{a['sha256']}  {a['name']}\n" for a in assets))
 

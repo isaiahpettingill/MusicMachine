@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Audio converter licenses and source · MusicMachine</title>
+<style>body{font:17px/1.6 system-ui,sans-serif;background:#1e1e2e;color:#cdd6f4;max-width:780px;margin:4rem auto;padding:0 1.5rem}a{color:#89b4fa}h1,h2{line-height:1.2}li{margin:.6rem 0}small{color:#bac2de}</style>
+<h1>Audio converter licenses and source</h1>
+<p>MusicMachine’s optional browser converter uses <a href="https://ffmpeg.org/">FFmpeg 9.0.2</a> licensed under LGPL version 2.1 or later. WAV and QOA import work without this converter. Your audio is processed on your device and is never uploaded.</p>
+<ul>
+<li><a href="./vendor/ffmpeg/audio-ffmpeg-9.0.2-emscripten-6.0.3-v1/ffmpeg-audio-source.tar.xz">Download the corresponding source and relinking materials</a></li>
+<li><a href="./vendor/ffmpeg/audio-ffmpeg-9.0.2-emscripten-6.0.3-v1/NOTICE.md">Read component notices</a></li>
+<li><a href="./vendor/ffmpeg/audio-ffmpeg-9.0.2-emscripten-6.0.3-v1/LGPL-2.1.txt">Read the LGPL 2.1 license</a></li>
+<li><a href="./vendor/ffmpeg/audio-ffmpeg-9.0.2-emscripten-6.0.3-v1/SOURCE-PROVENANCE.json">Review exact source, toolchain and artifact provenance</a></li>
+</ul>
+<h2>What is included</h2>
+<p>The source bundle contains the original signed FFmpeg source archive, MusicMachine’s complete adapter and build scripts, a relinkable adapter object, selected build configuration, and source and notices for the Emscripten runtime and system libraries. FFmpeg itself is unmodified. Only built-in audio decoders, demuxers and resampling are enabled; no third-party codec libraries, video encoders or network protocols are included.</p>
+<p>The MusicMachine adapter is MIT-licensed. Emscripten’s generated JavaScript runtime and applicable system-library components retain their included permissive licenses. The bundle explains how to modify, rebuild and replace the converter. MusicMachine does not restrict reverse engineering for debugging modifications to the FFmpeg library.</p>
+<p><small>Provided without warranty. In builds prepared without the optional converter, its download links are unavailable; native WAV and QOA import still work.</small></p>
+<p><a href="./">Return to MusicMachine</a> · <a href="/download/">Desktop downloads</a></p>
+</html>

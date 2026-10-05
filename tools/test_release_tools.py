@@ -2,6 +2,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 from pathlib import Path
 import tempfile
 import unittest
@@ -19,6 +20,7 @@ def module(filename):
 VERSION = module("ci-version.py")
 MANIFEST = module("release-manifest.py")
 INSTALLER = module("package-linux-installer.py")
+DESKTOP = module("prepare-desktop.py")
 
 class ReleaseTests(unittest.TestCase):
     def test_first_release(self):
@@ -49,6 +51,17 @@ class ReleaseTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     VERSION.current_main()
 
+    def test_release_does_not_collect_diagnostic_artifacts(self):
+        workflow = (TOOLS.parent / ".github/workflows/build.yml").read_text()
+        release = workflow.split("  release:\n", 1)[1]
+        downloads = re.findall(r"uses: actions/download-artifact@v4.*?(?=^      -|\Z)", release, re.M | re.S)
+        self.assertEqual(len(downloads), 2)
+        self.assertTrue(any("pattern: desktop-*" in step for step in downloads))
+        self.assertTrue(any("name: browser-wasm" in step for step in downloads))
+        for step in downloads:
+            self.assertTrue("pattern:" in step or "name: browser-wasm" in step)
+            self.assertNotIn("browser-app-smoke", step)
+
     def test_version_validation(self):
         for value in ("1.0", "../test", "1.2.3-rc1"):
             with self.assertRaises(ValueError):
@@ -70,9 +83,22 @@ class ReleaseTests(unittest.TestCase):
             MANIFEST.create(root)
             result = json.loads((root / "release.json").read_text())
             self.assertEqual(result["commit"], "abc")
-            self.assertEqual(len(result["assets"]), 6)
+            self.assertEqual(result["updaterProtocol"], 1)
+            self.assertEqual(len(result["assets"]), 7)
             self.assertTrue(all("/v1.2.3/" in asset["url"] for asset in result["assets"]))
-            self.assertEqual(len((root / "SHA256SUMS").read_text().splitlines()), 6)
+            self.assertEqual(len((root / "SHA256SUMS").read_text().splitlines()), 7)
+
+    def test_installed_metadata_advertises_updater_protocol(self):
+        with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, MUSIC_RELEASE_VERSION="1.2.3", GITHUB_SHA="a" * 40, GITHUB_REPOSITORY="example/MusicMachine"):
+            root = Path(temp)
+            (root / "MusicMachine.Desktop").write_bytes(b"harmless payload fixture")
+            (root / "MusicMachine.Desktop.dbg").write_bytes(b"debug symbols")
+            DESKTOP.prepare(root, "linux-x64")
+            metadata = json.loads((root / "release.json").read_text())
+            self.assertEqual(metadata["updaterProtocol"], 1)
+            self.assertEqual(metadata["runtime"], "linux-x64")
+            self.assertEqual(metadata["executable"], "MusicMachine.Desktop")
+            self.assertFalse((root / "MusicMachine.Desktop.dbg").exists())
 
     def test_linux_installer_is_version_and_checksum_pinned(self):
         with tempfile.TemporaryDirectory() as temp:

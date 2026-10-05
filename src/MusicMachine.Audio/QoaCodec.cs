@@ -44,9 +44,10 @@ public static class QoaCodec
     public static byte[] Encode(ReadOnlySpan<short> interleaved, int sampleRate = 48000, int channels = 2, CancellationToken cancellationToken = default)
     {
         if (channels is < 1 or > 8 || sampleRate is < 1 or > 0xffffff || interleaved.Length == 0 || interleaved.Length % channels != 0) throw new ArgumentException("QOA requires 1–8 channels, a valid sample rate, and complete nonempty frames.");
+        cancellationToken.ThrowIfCancellationRequested();
         int samples = interleaved.Length / channels;
-        int frames = (samples + FrameSamples - 1) / FrameSamples;
-        int slices = (samples + 19) / 20;
+        int frames = (samples - 1) / FrameSamples + 1;
+        int slices = (samples - 1) / 20 + 1;
         var bytes = new byte[checked(8 + frames * (8 + 16 * channels) + slices * 8 * channels)];
         int p = 0; Write(bytes, ref p, 0x716f616600000000UL | (uint)samples);
         var states = new Lms[channels];
@@ -55,41 +56,95 @@ public static class QoaCodec
         {
             cancellationToken.ThrowIfCancellationRequested();
             int count = Math.Min(FrameSamples, samples - start);
-            int frameSize = 8 + channels * 16 + ((count + 19) / 20) * channels * 8;
-            Write(bytes, ref p, (ulong)channels << 56 | (ulong)sampleRate << 32 | (ulong)count << 16 | (uint)frameSize);
-            for (int c = 0; c < channels; c++)
-            {
-                // Restart each frame from exactly the signed 16-bit state stored in its header.
-                states[c] = Lms.From(states[c].History, states[c].Weights);
-                Write(bytes, ref p, states[c].History); Write(bytes, ref p, states[c].Weights);
-            }
-            for (int index = 0; index < count; index += 20)
-            for (int c = 0; c < channels; c++)
-            {
-                int length = Math.Min(20, count - index); long bestRank = long.MaxValue; ulong bestSlice = 0; Lms best = states[c];
-                for (int scale = 0; scale < 16; scale++)
-                {
-                    Lms lms = states[c]; ulong slice = (uint)scale; long rank = 0;
-                    for (int i = 0; i < length; i++)
-                    {
-                        int sample = interleaved[(start + index + i) * channels + c];
-                        int predicted = lms.Predict(), residual = sample - predicted;
-                        int scaled = (int)(((long)residual * Reciprocal[scale] + (1 << 15)) >> 16);
-                        scaled += Math.Sign(residual) - Math.Sign(scaled);
-                        int quantized = Quant[Math.Clamp(scaled, -8, 8) + 8];
-                        int dequantized = Dequant[scale, quantized];
-                        int reconstructed = Math.Clamp(predicted + dequantized, -32768, 32767);
-                        long error = sample - reconstructed, penalty = lms.Penalty();
-                        rank += error * error + penalty * penalty;
-                        if (rank > bestRank) break;
-                        lms.Update(reconstructed, dequantized); slice = (slice << 3) | (uint)quantized;
-                    }
-                    if (rank < bestRank) { bestRank = rank; bestSlice = slice; best = lms; }
-                }
-                states[c] = best; Write(bytes, ref p, bestSlice << ((20 - length) * 3));
-            }
+            p += EncodeFrame(bytes.AsSpan(p), interleaved.Slice(start * channels, count * channels), sampleRate, channels, states);
         }
         return bytes;
+    }
+    private static int EncodeFrame(Span<byte> bytes, ReadOnlySpan<short> interleaved, int sampleRate, int channels, Lms[] states)
+    {
+        int count = interleaved.Length / channels, p = 0;
+        int frameSize = 8 + channels * 16 + ((count + 19) / 20) * channels * 8;
+        Write(bytes, ref p, (ulong)channels << 56 | (ulong)sampleRate << 32 | (ulong)count << 16 | (uint)frameSize);
+        for (int c = 0; c < channels; c++)
+        {
+            // Restart each frame from exactly the signed 16-bit state stored in its header.
+            states[c] = Lms.From(states[c].History, states[c].Weights);
+            Write(bytes, ref p, states[c].History); Write(bytes, ref p, states[c].Weights);
+        }
+        for (int index = 0; index < count; index += 20)
+        for (int c = 0; c < channels; c++)
+        {
+            int length = Math.Min(20, count - index); long bestRank = long.MaxValue; ulong bestSlice = 0; Lms best = states[c];
+            for (int scale = 0; scale < 16; scale++)
+            {
+                Lms lms = states[c]; ulong slice = (uint)scale; long rank = 0;
+                for (int i = 0; i < length; i++)
+                {
+                    int sample = interleaved[(index + i) * channels + c];
+                    int predicted = lms.Predict(), residual = sample - predicted;
+                    int scaled = (int)(((long)residual * Reciprocal[scale] + (1 << 15)) >> 16);
+                    scaled += Math.Sign(residual) - Math.Sign(scaled);
+                    int quantized = Quant[Math.Clamp(scaled, -8, 8) + 8];
+                    int dequantized = Dequant[scale, quantized];
+                    int reconstructed = Math.Clamp(predicted + dequantized, -32768, 32767);
+                    long error = sample - reconstructed, penalty = lms.Penalty();
+                    rank += error * error + penalty * penalty;
+                    if (rank > bestRank) break;
+                    lms.Update(reconstructed, dequantized); slice = (slice << 3) | (uint)quantized;
+                }
+                if (rank < bestRank) { bestRank = rank; bestSlice = slice; best = lms; }
+            }
+            states[c] = best; Write(bytes, ref p, bestSlice << ((20 - length) * 3));
+        }
+        return p;
+    }
+
+    internal static void ValidateFormat(long frames, int sampleRate, int channels)
+    {
+        if (frames is < 1 or > uint.MaxValue || channels is < 1 or > 8 || sampleRate is < 1 or > 0xffffff)
+            throw new ArgumentException("QOA requires 1–8 channels, a valid sample rate, and 1–4,294,967,295 frames.");
+    }
+
+    /// <summary>Bounded-memory QOA writer. The caller owns the stream; frames retain the reference codec's LMS history.</summary>
+    public sealed class Writer
+    {
+        private readonly Stream stream;
+        private readonly long total;
+        private readonly int sampleRate, channels;
+        private readonly Lms[] states, pendingStates;
+        private readonly byte[] frame;
+        private long written;
+        public Writer(Stream stream, long frames, int sampleRate = 48000, int channels = 2, CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(stream);
+            if (!stream.CanWrite) throw new ArgumentException("QOA needs a writable stream.", nameof(stream));
+            ValidateFormat(frames, sampleRate, channels);
+            cancellationToken.ThrowIfCancellationRequested();
+            this.stream = stream; total = frames; this.sampleRate = sampleRate; this.channels = channels;
+            states = new Lms[channels]; pendingStates = new Lms[channels];
+            for (int c = 0; c < channels; c++) states[c] = new Lms { W2 = -8192, W3 = 16384 };
+            frame = new byte[8 + channels * 16 + (FrameSamples / 20) * channels * 8];
+            Span<byte> header = stackalloc byte[8]; int p = 0;
+            Write(header, ref p, 0x716f616600000000UL | (uint)frames); stream.Write(header);
+        }
+        public void WriteFrame(ReadOnlySpan<short> interleaved, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            int expected = (int)Math.Min(FrameSamples, total - written);
+            if (expected == 0 || interleaved.Length != expected * channels)
+                throw new ArgumentException("Write one complete QOA frame, or the final partial frame, in sequence.");
+            // Do not advance the predictor if cancellation arrives while encoding the frame.
+            states.CopyTo(pendingStates, 0);
+            int length = EncodeFrame(frame, interleaved, sampleRate, channels, pendingStates);
+            cancellationToken.ThrowIfCancellationRequested();
+            stream.Write(frame.AsSpan(0, length));
+            pendingStates.CopyTo(states, 0); written += expected;
+        }
+        public void Complete(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (written != total) throw new InvalidOperationException("The QOA stream is incomplete.");
+        }
     }
     public static short[] Decode(ReadOnlySpan<byte> data, out int sampleRate, out int channels)
     {

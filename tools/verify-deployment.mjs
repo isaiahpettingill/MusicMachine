@@ -35,8 +35,13 @@ const releaseBase = `https://github.com/${deployedBuild.repository}/releases/dow
 const manifestResponse = await fetch(releaseBase + 'release.json', { signal: AbortSignal.timeout(30000) });
 if (!manifestResponse.ok) throw new Error(`Release manifest: HTTP ${manifestResponse.status}`);
 const manifest = await manifestResponse.json();
-if (manifest.commit !== sha || manifest.version !== deployedBuild.version || manifest.assets?.length !== 6)
+if (manifest.commit !== sha || manifest.version !== deployedBuild.version || !Array.isArray(manifest.assets))
   throw new Error('Published release manifest does not match the production app.');
+const requiredAssets = ['MusicMachine-win-x64-setup.exe', 'MusicMachine-win-x64.zip', 'MusicMachine-linux-x64.tar.gz',
+  'install-musicmachine.sh', 'install-musicmachine.ps1', 'MusicMachine-browser-wasm.zip', 'MusicMachine-source.zip'];
+const names = new Set(manifest.assets.map(asset => asset.name));
+if (names.size !== manifest.assets.length || !requiredAssets.every(name => names.has(name)))
+  throw new Error('Published release is missing required downloads or contains duplicate names.');
 for (const asset of manifest.assets) {
   if (!asset.url.startsWith(releaseBase) || !/^[a-f0-9]{64}$/.test(asset.sha256) || !(asset.size > 0))
     throw new Error(`Invalid release metadata for ${asset.name}`);

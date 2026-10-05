@@ -1,0 +1,28 @@
+{
+  "ffmpeg": {
+    "version": "9.0.2",
+    "url": "https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz",
+    "sha256": "8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e",
+    "signatureUrl": "https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz.asc",
+    "signatureSha256": "d617fd94ea354dadd2a8bb16243d37c44e1e9729b06b6ad58fe30bfb0fa943f2",
+    "signingKeyUrl": "https://ffmpeg.org/ffmpeg-devel.asc",
+    "signingKeySha256": "397b3becedcd5a98769967ff1ff8501ddc89f8368b8f766e4701377d7dbaabe5",
+    "fingerprint": "FCF986EA15E6E293A5644F10B4322F04D67658D8",
+    "patches": []
+  },
+  "toolchain": {
+    "packageVersion": "11.0.0-rc.1.26425.128",
+    "packageSourceCommit": "3551975be08744f0418857c5bed8ab1545c5dd47",
+    "packageSourceUrl": "https://github.com/dotnet/dotnet/tree/3551975be08744f0418857c5bed8ab1545c5dd47",
+    "emscriptenVersion": "6.0.3",
+    "emscriptenCommit": "6ea9c28c38cdd40c1032fa04400c9d16230ee180",
+    "emscriptenSourceUrl": "https://github.com/emscripten-core/emscripten/tree/6ea9c28c38cdd40c1032fa04400c9d16230ee180",
+    "nodeVersion": "v24.18.1",
+    "packages": {
+      "Microsoft.NET.Runtime.Emscripten.6.0.2.Sdk.linux-x64": "f823ede1607ac962dfb14fa4c42cd8cf32ffb54cd23ccfaa9bb4ef78b7cc502e",
+      "Microsoft.NET.Runtime.Emscripten.6.0.2.Cache.linux-x64": "d00a58ffca14f7d7639695e0df37d8356ae217b064d296ceec3f500886c72bdc",
+      "Microsoft.NET.Runtime.Emscripten.6.0.2.Node.linux-x64": "24cd50025fda7d8d5a6744e0ad227efd086e57c998c02fa32161ef55eb52b85b"
+    },
+    "note": "Official .NET package names contain 6.0.2; actual emcc version/commit is verified above, not inferred from the package name. Emscripten runtime and system-library source is copied from this exact SDK into the distributed source bundle."
+  }
+}

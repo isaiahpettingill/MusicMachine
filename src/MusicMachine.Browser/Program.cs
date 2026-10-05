@@ -21,6 +21,7 @@ internal static partial class Program
         };
         EditorPlatform.SaveRecoveryAsync = bytes => SaveRecovery(Convert.ToBase64String(bytes));
         EditorPlatform.ClearRecoveryAsync = ClearRecovery;
+        EditorPlatform.ConvertAudioToWaveAsync = BrowserAudioConverter.ConvertAsync;
         return AppBuilder.Configure<MusicMachine.App.App>()
             .WithInterFont()
             .StartBrowserAppAsync("out");

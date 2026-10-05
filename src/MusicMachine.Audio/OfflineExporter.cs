@@ -1,5 +1,5 @@
 using System.Diagnostics;
-using System.Text;
+using System.Buffers.Binary;
 using MusicMachine.Core;
 
 namespace MusicMachine.Audio;
@@ -21,27 +21,32 @@ public static class OfflineExporter
         }
         return data;
     }
+    /// <summary>Writes PCM16 WAV without retaining the whole song's rendered audio.</summary>
     public static void WriteWav(string path, Song song, CancellationToken cancellationToken = default, bool includeTail = false)
-        => WriteWav(path, Render(song, cancellationToken, includeTail), 48000, cancellationToken);
+        => WriteSongAsync(path, song, qoa: false, cooperative: false, cancellationToken, includeTail).GetAwaiter().GetResult();
+
+    /// <summary>Cooperatively yields between bounded blocks, even on single-threaded browser runtimes.</summary>
+    public static Task WriteWavAsync(string path, Song song, CancellationToken cancellationToken = default, bool includeTail = false)
+        => WriteSongAsync(path, song, qoa: false, cooperative: true, cancellationToken, includeTail);
+
     public static void WriteWav(string path, ReadOnlySpan<float> stereo, int sampleRate = 48000, CancellationToken cancellationToken = default)
     {
-        if ((stereo.Length & 1) != 0 || sampleRate <= 0) throw new ArgumentException("Invalid stereo PCM.");
+        if ((stereo.Length & 1) != 0) throw new ArgumentException("Invalid stereo PCM.");
+        uint dataSize = ValidateWavFormat(stereo.Length / 2, sampleRate);
+        cancellationToken.ThrowIfCancellationRequested();
         string fullPath = Path.GetFullPath(path), temporary = TemporaryPath(fullPath);
         try
         {
-            cancellationToken.ThrowIfCancellationRequested();
             using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write))
-            using (var writer = new BinaryWriter(stream, Encoding.ASCII))
             {
-                uint dataSize = checked((uint)stereo.Length * 2);
-                writer.Write("RIFF"u8); writer.Write(checked(36u + dataSize)); writer.Write("WAVEfmt "u8);
-                writer.Write(16u); writer.Write((ushort)1); writer.Write((ushort)2); writer.Write(sampleRate);
-                writer.Write(checked(sampleRate * 4)); writer.Write((ushort)4); writer.Write((ushort)16);
-                writer.Write("data"u8); writer.Write(dataSize);
-                for (int i = 0; i < stereo.Length; i++)
+                WriteWavHeader(stream, dataSize, sampleRate);
+                var bytes = new byte[4096 * 4];
+                for (int offset = 0; offset < stereo.Length;)
                 {
-                    if ((i & 8191) == 0) cancellationToken.ThrowIfCancellationRequested();
-                    writer.Write(ToPcm16(stereo[i]));
+                    cancellationToken.ThrowIfCancellationRequested();
+                    int count = Math.Min(bytes.Length / 2, stereo.Length - offset);
+                    WriteWavBlock(stream, stereo.Slice(offset, count), bytes);
+                    offset += count;
                 }
             }
             cancellationToken.ThrowIfCancellationRequested(); File.Move(temporary, fullPath, overwrite: true);
@@ -49,16 +54,190 @@ public static class OfflineExporter
         finally { if (File.Exists(temporary)) File.Delete(temporary); }
     }
 
-    public static void WriteQoa(string path, Song song, CancellationToken cancellationToken = default, bool includeTail = false)
-        => WriteQoa(path, Render(song, cancellationToken, includeTail), 48000, cancellationToken);
-    public static void WriteQoa(string path, ReadOnlySpan<float> stereo, int sampleRate = 48000, CancellationToken cancellationToken = default)
+    private static uint ValidateWavFormat(long frames, int sampleRate)
     {
-        var pcm = new short[stereo.Length]; for (int i = 0; i < pcm.Length; i++) pcm[i] = ToPcm16(stereo[i]);
-        var bytes = QoaCodec.Encode(pcm, sampleRate, 2, cancellationToken);
+        if (sampleRate is < 1 or > int.MaxValue / 4 || frames < 0 || frames > (uint.MaxValue - 36L) / 4)
+            throw new ArgumentException("PCM16 stereo WAV needs a valid sample rate and a RIFF size below 4 GiB.");
+        return (uint)(frames * 4);
+    }
+
+    private static void WriteWavHeader(Stream stream, uint dataSize, int sampleRate)
+    {
+        Span<byte> header = stackalloc byte[44];
+        "RIFF"u8.CopyTo(header); BinaryPrimitives.WriteUInt32LittleEndian(header[4..], 36 + dataSize);
+        "WAVEfmt "u8.CopyTo(header[8..]); BinaryPrimitives.WriteUInt32LittleEndian(header[16..], 16);
+        BinaryPrimitives.WriteUInt16LittleEndian(header[20..], 1); BinaryPrimitives.WriteUInt16LittleEndian(header[22..], 2);
+        BinaryPrimitives.WriteInt32LittleEndian(header[24..], sampleRate); BinaryPrimitives.WriteInt32LittleEndian(header[28..], sampleRate * 4);
+        BinaryPrimitives.WriteUInt16LittleEndian(header[32..], 4); BinaryPrimitives.WriteUInt16LittleEndian(header[34..], 16);
+        "data"u8.CopyTo(header[36..]); BinaryPrimitives.WriteUInt32LittleEndian(header[40..], dataSize);
+        stream.Write(header);
+    }
+
+    private static void WriteWavBlock(Stream stream, ReadOnlySpan<float> samples, Span<byte> bytes)
+    {
+        for (int i = 0; i < samples.Length; i++) BinaryPrimitives.WriteInt16LittleEndian(bytes[(i * 2)..], ToPcm16(samples[i]));
+        stream.Write(bytes[..(samples.Length * 2)]);
+    }
+
+    /// <summary>Built-in lossless PCM16 FLAC. Streams the song in bounded 4096-frame blocks.</summary>
+    public static void WriteFlac(string path, Song song, CancellationToken cancellationToken = default, bool includeTail = false)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var renderer = new SynthRenderer(song);
+        long frames = includeTail ? renderer.TotalFrames : renderer.MusicalFrames;
         string fullPath = Path.GetFullPath(path), temporary = TemporaryPath(fullPath);
         try
         {
-            cancellationToken.ThrowIfCancellationRequested(); File.WriteAllBytes(temporary, bytes);
+            using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write))
+            {
+                var writer = new FlacEncoder.Writer(stream, frames, cancellationToken);
+                var samples = new float[FlacEncoder.BlockSize * 2];
+                var pcm = new short[samples.Length];
+                while (renderer.PositionFrames < frames)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    int count = (int)Math.Min(FlacEncoder.BlockSize, frames - renderer.PositionFrames) * 2;
+                    renderer.Render(samples.AsSpan(0, count));
+                    for (int i = 0; i < count; i++) pcm[i] = ToPcm16(samples[i]);
+                    writer.WriteBlock(pcm.AsSpan(0, count), cancellationToken);
+                }
+                writer.Complete(cancellationToken);
+            }
+            cancellationToken.ThrowIfCancellationRequested(); File.Move(temporary, fullPath, overwrite: true);
+        }
+        finally { if (File.Exists(temporary)) File.Delete(temporary); }
+    }
+
+    /// <summary>Cooperatively yields between blocks, including on single-threaded browser runtimes.
+    /// The synchronous overload remains suitable for worker threads and headless export.</summary>
+    public static async Task WriteFlacAsync(string path, Song song, CancellationToken cancellationToken = default, bool includeTail = false)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var renderer = new SynthRenderer(song);
+        long frames = includeTail ? renderer.TotalFrames : renderer.MusicalFrames;
+        string fullPath = Path.GetFullPath(path), temporary = TemporaryPath(fullPath);
+        try
+        {
+            using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write))
+            {
+                var writer = new FlacEncoder.Writer(stream, frames, cancellationToken);
+                var samples = new float[FlacEncoder.BlockSize * 2];
+                var pcm = new short[samples.Length];
+                while (renderer.PositionFrames < frames)
+                {
+                    // Task.Run alone does not create a worker on single-threaded WebAssembly.
+                    // A timer yield allows UI input/cancellation to run between bounded blocks.
+                    await Task.Delay(1, cancellationToken);
+                    int count = (int)Math.Min(FlacEncoder.BlockSize, frames - renderer.PositionFrames) * 2;
+                    renderer.Render(samples.AsSpan(0, count));
+                    for (int i = 0; i < count; i++) pcm[i] = ToPcm16(samples[i]);
+                    writer.WriteBlock(pcm.AsSpan(0, count), cancellationToken);
+                }
+                writer.Complete(cancellationToken);
+            }
+            cancellationToken.ThrowIfCancellationRequested(); File.Move(temporary, fullPath, overwrite: true);
+        }
+        finally { if (File.Exists(temporary)) File.Delete(temporary); }
+    }
+
+    public static void WriteFlac(string path, ReadOnlySpan<float> stereo, int sampleRate = 48000, CancellationToken cancellationToken = default)
+    {
+        if (stereo.IsEmpty || (stereo.Length & 1) != 0 || sampleRate != FlacEncoder.SampleRate)
+            throw new ArgumentException("Built-in FLAC needs nonempty 48 kHz stereo PCM.");
+        string fullPath = Path.GetFullPath(path), temporary = TemporaryPath(fullPath);
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write))
+            {
+                var writer = new FlacEncoder.Writer(stream, stereo.Length / 2, cancellationToken);
+                var pcm = new short[FlacEncoder.BlockSize * 2];
+                for (int offset = 0; offset < stereo.Length;)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    int count = Math.Min(pcm.Length, stereo.Length - offset);
+                    for (int i = 0; i < count; i++) pcm[i] = ToPcm16(stereo[offset + i]);
+                    writer.WriteBlock(pcm.AsSpan(0, count), cancellationToken);
+                    offset += count;
+                }
+                writer.Complete(cancellationToken);
+            }
+            cancellationToken.ThrowIfCancellationRequested(); File.Move(temporary, fullPath, overwrite: true);
+        }
+        finally { if (File.Exists(temporary)) File.Delete(temporary); }
+    }
+
+    /// <summary>Writes QOA in bounded 5120-frame blocks, preserving predictor state across frames.</summary>
+    public static void WriteQoa(string path, Song song, CancellationToken cancellationToken = default, bool includeTail = false)
+        => WriteSongAsync(path, song, qoa: true, cooperative: false, cancellationToken, includeTail).GetAwaiter().GetResult();
+
+    /// <summary>Cooperatively yields between bounded blocks, even on single-threaded browser runtimes.</summary>
+    public static Task WriteQoaAsync(string path, Song song, CancellationToken cancellationToken = default, bool includeTail = false)
+        => WriteSongAsync(path, song, qoa: true, cooperative: true, cancellationToken, includeTail);
+
+    private static async Task WriteSongAsync(string path, Song song, bool qoa, bool cooperative, CancellationToken cancellationToken, bool includeTail)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var renderer = new SynthRenderer(song);
+        long frames = includeTail ? renderer.TotalFrames : renderer.MusicalFrames;
+        // Validate representable lengths before opening even the temporary output.
+        uint wavDataSize = 0;
+        if (qoa) QoaCodec.ValidateFormat(frames, SynthRenderer.OutputSampleRate, 2);
+        else wavDataSize = ValidateWavFormat(frames, SynthRenderer.OutputSampleRate);
+        string fullPath = Path.GetFullPath(path), temporary = TemporaryPath(fullPath);
+        try
+        {
+            using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write))
+            {
+                int blockFrames = qoa ? QoaCodec.FrameSamples : 4096;
+                var samples = new float[blockFrames * 2];
+                var pcm = qoa ? new short[samples.Length] : [];
+                var bytes = qoa ? [] : new byte[samples.Length * 2];
+                var writer = qoa ? new QoaCodec.Writer(stream, frames, cancellationToken: cancellationToken) : null;
+                if (!qoa) WriteWavHeader(stream, wavDataSize, SynthRenderer.OutputSampleRate);
+                while (renderer.PositionFrames < frames)
+                {
+                    // Task.Run cannot yield to UI input on single-threaded WebAssembly. A timer can.
+                    if (cooperative) await Task.Delay(1, cancellationToken);
+                    cancellationToken.ThrowIfCancellationRequested();
+                    int count = (int)Math.Min(blockFrames, frames - renderer.PositionFrames) * 2;
+                    renderer.Render(samples.AsSpan(0, count));
+                    if (writer is not null)
+                    {
+                        for (int i = 0; i < count; i++) pcm[i] = ToPcm16(samples[i]);
+                        writer.WriteFrame(pcm.AsSpan(0, count), cancellationToken);
+                    }
+                    else WriteWavBlock(stream, samples.AsSpan(0, count), bytes);
+                }
+                writer?.Complete(cancellationToken);
+            }
+            cancellationToken.ThrowIfCancellationRequested(); File.Move(temporary, fullPath, overwrite: true);
+        }
+        finally { if (File.Exists(temporary)) File.Delete(temporary); }
+    }
+
+    public static void WriteQoa(string path, ReadOnlySpan<float> stereo, int sampleRate = 48000, CancellationToken cancellationToken = default)
+    {
+        if ((stereo.Length & 1) != 0) throw new ArgumentException("Invalid stereo PCM.");
+        QoaCodec.ValidateFormat(stereo.Length / 2, sampleRate, 2);
+        cancellationToken.ThrowIfCancellationRequested();
+        string fullPath = Path.GetFullPath(path), temporary = TemporaryPath(fullPath);
+        try
+        {
+            using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write))
+            {
+                var writer = new QoaCodec.Writer(stream, stereo.Length / 2, sampleRate, cancellationToken: cancellationToken);
+                var pcm = new short[QoaCodec.FrameSamples * 2];
+                for (int offset = 0; offset < stereo.Length;)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    int count = Math.Min(pcm.Length, stereo.Length - offset);
+                    for (int i = 0; i < count; i++) pcm[i] = ToPcm16(stereo[offset + i]);
+                    writer.WriteFrame(pcm.AsSpan(0, count), cancellationToken);
+                    offset += count;
+                }
+                writer.Complete(cancellationToken);
+            }
             cancellationToken.ThrowIfCancellationRequested(); File.Move(temporary, fullPath, overwrite: true);
         }
         finally { if (File.Exists(temporary)) File.Delete(temporary); }

@@ -1,2 +1,4 @@
 # Preserve upstream notice text verbatim, including its original line endings.
 licenses/** -whitespace
+
+src/MusicMachine.Browser/licenses/** -whitespace

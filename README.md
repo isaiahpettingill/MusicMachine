@@ -12,7 +12,7 @@ Install the .NET SDK pinned by `global.json` (11.0.100-rc.1.26425.128), then:
 dotnet run --project src/MusicMachine.Desktop
 ```
 
-Realtime audio uses SDL2. On Linux install `libsdl2-2.0-0`; the Windows release bundles the official SDL2 runtime. For a Windows source build, put SDL2.dll beside the executable. WAV and QOA export work without SDL2 or an audio device. The Linux desktop uses X11 or XWayland.
+Realtime audio uses SDL2. On Linux install `libsdl2-2.0-0`; the Windows release bundles the official SDL2 runtime. For a Windows source build, put SDL2.dll beside the executable. WAV, FLAC and QOA export work without SDL2 or an audio device. The Linux desktop uses X11 or XWayland.
 
 ```sh
 dotnet test tests/MusicMachine.Tests
@@ -36,7 +36,7 @@ Serve `artifacts/browser/wwwroot` over HTTP. Cloudflare Pages serves the applica
 
 File, Edit, View, Pattern, Track, Instrument and Transport menus hold infrequent commands. Material icon buttons keep playback and pane controls compact, with tooltips and keyboard shortcuts.
 
-Use the center selector for Tracker, Drums, Instrument, Arrangement or Automation. Ctrl+L toggles the library and Ctrl+I toggles the inspector; the instrument editor opens in a two-column center layout when space allows. The inspector has collapsible sections. Theme and pane/workspace preferences persist locally (browser preferences use localStorage).
+Use the center selector for Tracker, Drums, Instrument, Arrangement, Automation or Sampling. Ctrl+L toggles the library and Ctrl+I toggles the inspector; the instrument editor opens in a two-column center layout when space allows. The inspector has collapsible sections. Theme and pane/workspace preferences persist locally (browser preferences use localStorage).
 
 **View → Theme** offers exactly the ComicEditor choices: Solarized light, Solarized dark, Catppuccin Mocha, Catppuccin Latte, Dark and Gruvbox. Mocha is the default. **View → FX columns** hides or shows tracker effect columns without changing the music or selected track.
 
@@ -54,13 +54,23 @@ Use the center selector for Tracker, Drums, Instrument, Arrangement or Automatio
 
 The project is a self-contained binary CBOR `.song`; reusable presets are CBOR `.instrument` files. No JSON/ZIP substitution, external preset dependency, or reflection-based serializer is involved. Writes are atomic, history tracks saved content, and unsaved edits receive a recovery snapshot.
 
+## Extract a sound in Sampling
+
+Choose **Sampling** in the center workspace or **File → Import audio for sampling**. WAV and QOA import directly on desktop and in the browser. Drag the source waveform, or set selection bounds numerically, then choose **Find stable cycle**. The detector suggests a representative monophonic period (40–2,000 Hz) and reports confidence. Silence, noisy material and short regions have explicit warnings; for unpitched sounds, adjust the cycle start and period and choose **Extract manual cycle**.
+
+Smooth, drive and sine-blend controls always derive from the original extraction, so reset is lossless. Audition at C4, then create a new instrument, replace the selected waveform, or append a wavetable frame. Applying is an ordinary undoable song edit; replacing a shared instrument affects all its notes. Only the extracted 128-sample periodic waveform is stored. Source clips are transient, and this is waveform synthesis, not full-recording playback or preservation.
+
+Imports are limited to 32 MiB, 30 seconds and 1,440,000 source frames, with strict decoder validation and cancellation. Higher-rate clips can hit the frame cap before 30 seconds. Desktop **File → Configure FFmpeg** accepts an explicitly selected, already installed executable for best-effort conversion of other audio formats; MusicMachine never searches PATH or installs it. Browser builds can provide an optional local FFmpeg WebAssembly conversion runtime; WAV/QOA import remains independent of it. Unsupported, too-long, malformed or cancelled imports preserve the previous extraction.
+
 ## Export for Godot
 
-Choose **File → Export audio** for built-in PCM16 WAV or QOA. Exports use the same deterministic 48 kHz stereo engine as realtime playback and include the complete arrangement at exact musical length. Loop markers control playback; they do not silently crop the exported arrangement. Compose compatible endpoints or crossfade in your game to prevent a loop seam. Natural release-tail export is also available through the audio API.
+Choose **File → Export audio** for built-in PCM16 WAV, lossless FLAC or QOA on desktop and in the browser. Exports use the same deterministic 48 kHz stereo engine as realtime playback and include the complete arrangement at exact musical length. Loop markers control playback; they do not silently crop the exported arrangement. Compose compatible endpoints or crossfade in your game to prevent a loop seam. Natural release-tail export is also available through the audio API.
+
+Built-in song rendering uses fixed-size audio buffers. Cancel remains available while rendering; browser/non-local saves enter a short Finalizing phase before committing. A storage-provider failure or closing the browser tab during that final save can leave an incomplete destination.
 
 WAV is the baseline interchange format: copy it into your Godot project, set the desired loop import/playback settings, and use an AudioStreamPlayer. `.song` and `.instrument` are MusicMachine source formats, not built-in Godot resources. QOA requires a compatible Godot version or decoder; do not assume every Godot release imports standalone `.qoa` files.
 
-Optional **FFmpeg…** export accepts an explicit, trusted local executable path for FLAC/MP3/Opus/Ogg/M4A. Nothing is bundled or downloaded, and codec support depends on that FFmpeg build. Cancellation and failures preserve an existing output file.
+Optional **FFmpeg…** export accepts an explicit, trusted local executable path for MP3/Opus/Ogg/M4A. Nothing is bundled or downloaded, and codec support depends on that FFmpeg build. Cancellation and failures preserve an existing output file.
 
 Headless export is available without opening the UI:
 
@@ -74,15 +84,20 @@ dotnet run --project src/MusicMachine.Desktop -- --export song.song music.qoa
 The layout follows the actual architectural patterns in the author's [ComicEditor](https://github.com/isaiahpettingill/comic_editor) and [Vibe Harder](https://github.com/isaiahpettingill/vibe-harder): a thin platform host, reusable Avalonia UI, explicit editing state and history, NativeAOT-friendly serialization, named theme colors, compact editor chrome, separate durable data and background work.
 
 - **MusicMachine.Core**: song/instrument model, explicit versioned CBOR, validators, note grammar, snapshots/history, presets/demo
-- **MusicMachine.Audio**: deterministic synthesis, sample-accurate sequencing, allocation-free audio rendering, SDL2 device lifecycle, WAV/QOA and optional FFmpeg export
-- **MusicMachine.App**: shared Avalonia controls, tracker, sound designer, arrangement/automation, drums, file workflows and recovery
+- **MusicMachine.Audio**: deterministic synthesis, sample-accurate sequencing, allocation-free audio rendering, SDL2 device lifecycle, WAV/FLAC/QOA export, bounded sample import and optional FFmpeg conversion
+- **MusicMachine.App**: shared Avalonia controls, tracker, sound designer, arrangement/automation, drums, waveform sampling, file workflows, desktop updates and recovery
 - **MusicMachine.Desktop**: platform startup and headless export entry point
+- **MusicMachine.Browser**: WebAssembly host, real Web Audio output, local recovery and optional source-built audio conversion
 - **MusicMachine.Tests**: model corruption/roundtrip tests, editing/parser regressions, DSP timing/determinism/allocation tests, audio codec interoperability fixtures
 
 See [the format and timing contract](docs/format.md) and [audio backend documentation](src/MusicMachine.Audio/README.md). The engine has no UI dependency and can support a future Godot adapter; none is required for rendered audio.
 
+## Desktop updates
+
+Windows and Linux release packages offer **Help → Check for updates**. Availability checks can run automatically; downloading and restarting require your choice. Downloads are size/hash verified, and unsaved songs receive durable recovery snapshots before replacement. See [updater behavior and recovery limits](docs/updater.md). Installer scripts and per-user setup are described in [release documentation](docs/releases.md).
+
 ## Scope and known limits
 
-This is a standalone synthesizer, not a chip emulator or VST host. Instruments and sample buffers are synthesized; sample playback/import and tracker-format import are not included. Output is currently fixed at 48 kHz/PCM16 for WAV/QOA. Editing stops realtime playback before updating the snapshot. Grid refinement preserves event onsets by inserting empty rows; row-relative FX are measured in the newly selected row duration. Coarsening must preserve all events or be rejected. Linux verification does not substitute for Windows runtime testing.
+This is a standalone synthesizer, not a chip emulator or VST host. Instruments and sample buffers are synthesized; full-sample playback and tracker-format import are not included. Sampling imports short clips only to extract embedded periodic waveforms. Output is currently fixed at 48 kHz/PCM16 for WAV/FLAC/QOA. Editing stops realtime playback before updating the snapshot. Grid refinement preserves event onsets by inserting empty rows; row-relative FX are measured in the newly selected row duration. Coarsening must preserve all events or be rejected. Linux verification does not substitute for Windows runtime testing.
 
 The repository's existing MIT license is preserved. QOA interoperability follows the public reference specification; attribution is included in the audio project.
