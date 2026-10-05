@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       build_run_id:
-        description: Successful Build and release run to deploy
+        description: Completed run with a successful browser job to deploy
         required: true
         type: string
 
@@ -28,8 +28,7 @@ jobs:
   deploy:
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.event != 'pull_request' &&
+      (github.event.workflow_run.event != 'pull_request' &&
        github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-24.04
     environment:
@@ -46,7 +45,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID || '2fce3daa1512f468e77450b90b85cc53' }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: node tools/check-pages-credentials.mjs
-      - name: Verify trusted successful build and reject stale automatic deploys
+      - name: Verify trusted successful browser job and reject stale automatic deploys
         id: build
         if: steps.credentials.outputs.configured == 'true'
         env:
@@ -56,7 +55,13 @@ jobs:
         run: |
           [[ "$BUILD_RUN_ID" =~ ^[0-9]+$ ]]
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN_ID" > "$RUNNER_TEMP/build.json"
-          jq -e --arg repo "$GITHUB_REPOSITORY" '.conclusion == "success" and .name == "Build and release" and .path == ".github/workflows/build.yml" and (.event == "push" or .event == "workflow_dispatch") and .head_repository.full_name == $repo' "$RUNNER_TEMP/build.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN_ID/jobs?filter=latest&per_page=100" > "$RUNNER_TEMP/jobs.json"
+          browser_ok=$(node tools/check-browser-build.mjs "$RUNNER_TEMP/build.json" "$RUNNER_TEMP/jobs.json")
+          if [ "$browser_ok" != true ]; then
+            echo 'Browser job did not pass; Pages deployment skipped.' >> "$GITHUB_STEP_SUMMARY"
+            echo 'deploy=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           sha=$(jq -r .head_sha "$RUNNER_TEMP/build.json")
           git merge-base --is-ancestor "$sha" origin/main
           if [ "$AUTOMATIC" = true ] && [ "$sha" != "$(git rev-parse origin/main)" ]; then

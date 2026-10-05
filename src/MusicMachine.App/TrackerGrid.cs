@@ -102,6 +102,11 @@ public sealed class TrackerGrid : Control
             var normalized = text.Trim().ToUpperInvariant();
             if (!FxParser.TryParse(normalized, out _, out var error)) return RejectEdit(error, text);
             var existing = Current?.Effects.ToList() ?? [];
+            // Opening and committing an unchanged blank FX cell is not an edit.
+            // Padding a missing slot with empty strings would otherwise dirty a
+            // clean song and unexpectedly block Open/New/demo behind a save prompt.
+            if (normalized == (existing.ElementAtOrDefault(cellColumn - 1) ?? ""))
+            { ClearEdit(); InvalidateVisual(); return true; }
             while (existing.Count < cellColumn) existing.Add("");
             existing[cellColumn - 1] = normalized;
             try { FxParser.Validate(existing); } catch (Exception e) { return RejectEdit(e.Message, text); }

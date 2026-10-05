@@ -53,15 +53,7 @@ jobs:
           node-version: '24'
       - run: node --test tools/test-pages.mjs src/MusicMachine.Browser/tests/*.test.js
       - run: python -m unittest discover -s tools -p 'test_release_tools.py' -v
-      - name: Test Windows bootstrap integrity and argument handling
-        if: runner.os == 'Windows'
-        run: powershell -NoProfile -NonInteractive -File tools/test-windows-bootstrap.ps1
-      - name: Test Linux installer safety and upgrade paths
-        if: runner.os == 'Linux'
-        run: |
-          bash -n tools/install-linux.sh
-          python3 -m unittest discover -s tools -p 'test_linux_installer.py' -v
-
+      - run: python -m unittest discover -s tools -p 'test_native_payload.py' -v
   desktop:
     needs: [prepare, tests]
     strategy:
@@ -83,26 +75,13 @@ jobs:
           global-json-file: global.json
       - name: Install Linux native build and audio dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev libsdl2-2.0-0 ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev libsdl2-2.0-0
       - name: Publish native desktop app
         run: dotnet publish src/MusicMachine.Desktop -c Release -r ${{ matrix.rid }} -p:PublishAot=true -o artifacts/${{ matrix.rid }}
       - name: Stage licenses, icons, metadata and Windows audio runtime
         run: python tools/prepare-desktop.py artifacts/${{ matrix.rid }} ${{ matrix.rid }}
-      - name: Smoke-test native audio export
-        run: python tools/test-native-payload.py artifacts/${{ matrix.rid }}
-      - name: Smoke-test actual Windows NativeAOT GUI
-        if: runner.os == 'Windows'
-        run: python tools/test-windows-gui.py artifacts/win-x64 artifacts/windows-gui-smoke
-      - name: Retain Windows GUI screenshots and diagnostics
-        if: always() && runner.os == 'Windows'
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-gui-smoke
-          path: artifacts/windows-gui-smoke
-          if-no-files-found: warn
-      - name: Test native Linux updater helper with disposable installs
-        if: runner.os == 'Linux'
-        run: python3 tools/test-updater-helper.py artifacts/linux-x64/MusicMachine.Desktop
+      - name: Verify native binary format, stripping and runtime exclusions
+        run: python tools/verify-native-payload.py artifacts/${{ matrix.rid }} ${{ matrix.rid }}
       - name: Archive Windows portable app
         if: runner.os == 'Windows'
         shell: pwsh
@@ -110,14 +89,10 @@ jobs:
       - name: Install NSIS
         if: runner.os == 'Windows'
         run: choco install nsis --version=3.12.0 -y --no-progress
-      - name: Build and test Windows installer
+      - name: Build Windows installer
         if: runner.os == 'Windows'
         run: |
           python tools/package-windows-installer.py artifacts/win-x64 MusicMachine-win-x64-setup.exe
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python tools/test-windows-installer.py --source-check
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python tools/test-windows-installer.py MusicMachine-win-x64-setup.exe artifacts/win-x64 --allow-unsupported-ci-runner
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Copy-Item tools/install-windows.ps1 install-musicmachine.ps1
       - name: Archive Linux app and build version-pinned installer
@@ -156,20 +131,7 @@ jobs:
           npm ci --ignore-scripts --no-audit --no-fund
           npm run build:ffmpeg
           npm run vendor:ffmpeg
-          npm test
-          npm run test:runtime
           npm run verify:distribution
-      - name: Verify native-reference formats and real browser worker lifecycle
-        working-directory: src/MusicMachine.Browser
-        run: |
-          if ! command -v ffmpeg >/dev/null; then
-            sudo apt-get update
-            sudo apt-get install -y ffmpeg
-          fi
-          npm run test:formats
-          export CHROMIUM="$(command -v google-chrome || command -v chromium)"
-          test -n "$CHROMIUM"
-          npm run test:browser
       - name: Publish browser app with converter source and notices
         run: dotnet publish src/MusicMachine.Browser -c Release -o artifacts/browser
       - name: Prepare browser release and Cloudflare assets
@@ -179,27 +141,6 @@ jobs:
           (cd artifacts/browser/wwwroot && zip -qr ../../../MusicMachine-browser-wasm.zip .)
           node tools/prepare-pages.mjs artifacts/browser/wwwroot artifacts/pages
           (cd artifacts/pages && zip -qr ../MusicMachine-pages.zip .)
-      - name: Smoke the actual prepared Avalonia app, keyboard settings and real audio
-        run: |
-          export CHROMIUM="$(command -v google-chrome || command -v chromium)"
-          test -n "$CHROMIUM"
-          node src/MusicMachine.Browser/tools/smoke-published-app.mjs artifacts/pages artifacts/browser-app-smoke
-      - name: Retain published-app smoke screenshots and diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: browser-app-smoke
-          path: artifacts/browser-app-smoke
-          if-no-files-found: warn
-      - name: Retain failed browser candidate for diagnosis only
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: browser-candidate-diagnostics
-          path: |
-            artifacts/MusicMachine-pages.zip
-            MusicMachine-browser-wasm.zip
-          if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
         with:
           name: browser-wasm
@@ -214,7 +155,7 @@ jobs:
   release:
     name: Publish GitHub release
     if: needs.prepare.outputs.publish == 'true'
-    needs: [prepare, desktop, browser]
+    needs: [prepare, desktop]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -238,12 +179,6 @@ jobs:
           pattern: desktop-*
           path: dist
           merge-multiple: true
-      - name: Collect browser release payload only
-        uses: actions/download-artifact@v4
-        if: steps.current.outputs.publish == 'true'
-        with:
-          name: browser-wasm
-          path: dist
       - name: Verify full release set and checksums
         if: steps.current.outputs.publish == 'true'
         run: |

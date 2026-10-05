@@ -1,1 +1,19 @@
-<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>WinExe</OutputType><PublishAot>true</PublishAot><IsAotCompatible>true</IsAotCompatible><ApplicationIcon>../../assets/icon/musicmachine.ico</ApplicationIcon><ApplicationManifest>app.manifest</ApplicationManifest></PropertyGroup><ItemGroup><PackageReference Include="Avalonia.Desktop"/><ProjectReference Include="../MusicMachine.App/MusicMachine.App.csproj"/></ItemGroup></Project>
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <PublishAot>true</PublishAot>
+    <IsAotCompatible>true</IsAotCompatible>
+    <ApplicationIcon>../../assets/icon/musicmachine.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <!-- NativeAOT's SDK-supported Speed goal emits the throughput optimization flag and enables PGO. -->
+    <OptimizationPreference>Speed</OptimizationPreference>
+    <PublishTrimmed>true</PublishTrimmed>
+    <TrimMode>full</TrimMode>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Avalonia.Desktop" />
+    <ProjectReference Include="../MusicMachine.App/MusicMachine.App.csproj" />
+  </ItemGroup>
+</Project>

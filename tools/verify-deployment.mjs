@@ -38,7 +38,7 @@ const manifest = await manifestResponse.json();
 if (manifest.commit !== sha || manifest.version !== deployedBuild.version || !Array.isArray(manifest.assets))
   throw new Error('Published release manifest does not match the production app.');
 const requiredAssets = ['MusicMachine-win-x64-setup.exe', 'MusicMachine-win-x64.zip', 'MusicMachine-linux-x64.tar.gz',
-  'install-musicmachine.sh', 'install-musicmachine.ps1', 'MusicMachine-browser-wasm.zip', 'MusicMachine-source.zip'];
+  'install-musicmachine.sh', 'install-musicmachine.ps1', 'MusicMachine-source.zip'];
 const names = new Set(manifest.assets.map(asset => asset.name));
 if (names.size !== manifest.assets.length || !requiredAssets.every(name => names.has(name)))
   throw new Error('Published release is missing required downloads or contains duplicate names.');

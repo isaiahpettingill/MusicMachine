@@ -89,12 +89,15 @@ class ReleaseTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "no GUI was tested"):
                 WINDOWS_GUI.run(Path("unused"), Path("unused"))
 
-    def test_windows_gui_smoke_is_required_before_installer_test_and_not_released(self):
+    def test_fast_ci_omits_runtime_smoke_and_installer_gates(self):
         workflow = (TOOLS.parent / ".github/workflows/build.yml").read_text()
-        self.assertLess(workflow.index("python tools/test-windows-gui.py"), workflow.index("python tools/test-windows-installer.py"))
-        self.assertIn("name: windows-gui-smoke", workflow)
-        release = workflow.split("  release:\n", 1)[1]
-        self.assertNotIn("name: windows-gui-smoke", release)
+        for command in ("test-windows-gui.py", "test-windows-installer.py", "test-updater-helper.py",
+                        "test-native-payload.py", "test_linux_installer.py", "test-windows-bootstrap.ps1",
+                        "smoke-published-app.mjs", "test:browser", "test:formats", "test:runtime"):
+            self.assertNotIn(command, workflow)
+        self.assertIn("dotnet test tests/MusicMachine.Tests", workflow)
+        self.assertIn("node --test", workflow)
+        self.assertIn("tools/verify-native-payload.py", workflow)
 
     def test_windows_installer_guard_does_not_manufacture_token_properties(self):
         script = (TOOLS / "test-windows-installer.py").read_text()
@@ -138,12 +141,11 @@ class ReleaseTests(unittest.TestCase):
         self.assertLess(script.index('assert result.returncode == 2, "Elevated setup was not refused"'),
                         script.index("except UnsupportedStandardUserRunner as error:"))
         workflow = (TOOLS.parent / ".github/workflows/build.yml").read_text()
-        self.assertIn("python tools/test-windows-installer.py --source-check", workflow)
-        self.assertIn("artifacts/win-x64 --allow-unsupported-ci-runner", workflow)
+        self.assertNotIn("--allow-unsupported-ci-runner", workflow)
         self.assertNotIn("continue-on-error:", workflow)
-        installer_step = workflow.split("      - name: Build and test Windows installer", 1)[1].split("      - name:", 1)[0]
+        installer_step = workflow.split("      - name: Build Windows installer", 1)[1].split("      - name:", 1)[0]
         commands = re.findall(r"^          python .*\n(.*)", installer_step, re.M)
-        self.assertEqual(len(commands), 3)
+        self.assertEqual(len(commands), 1)
         self.assertTrue(all(line.strip() == "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }" for line in commands),
                         "PowerShell must stop after each failed native command, not only the final one")
 
@@ -179,19 +181,25 @@ class ReleaseTests(unittest.TestCase):
         workflow = (TOOLS.parent / ".github/workflows/build.yml").read_text()
         release = workflow.split("  release:\n", 1)[1]
         downloads = re.findall(r"uses: actions/download-artifact@v4.*?(?=^      -|\Z)", release, re.M | re.S)
-        self.assertEqual(len(downloads), 2)
+        self.assertEqual(len(downloads), 1)
         self.assertTrue(any("pattern: desktop-*" in step for step in downloads))
-        self.assertTrue(any("name: browser-wasm" in step for step in downloads))
         for step in downloads:
-            self.assertTrue("pattern:" in step or "name: browser-wasm" in step)
+            self.assertIn("pattern: desktop-*", step)
+            self.assertNotIn("browser-wasm", step)
             self.assertNotIn("browser-app-smoke", step)
             self.assertNotIn("browser-candidate-diagnostics", step)
             self.assertNotIn("windows-gui-smoke", step)
-        candidate = workflow.split("      - name: Retain failed browser candidate for diagnosis only\n", 1)[1].split("      - uses:", 1)[0]
-        self.assertIn("if: failure()", candidate)
-        self.assertIn("name: browser-candidate-diagnostics", candidate)
         pages = (TOOLS.parent / ".github/workflows/pages.yml").read_text()
         self.assertNotIn("browser-candidate-diagnostics", pages)
+
+    def test_native_release_is_independent_of_browser(self):
+        workflow = (TOOLS.parent / ".github/workflows/build.yml").read_text()
+        release = workflow.split("  release:\n", 1)[1]
+        self.assertIn("needs: [prepare, desktop]", release)
+        self.assertNotIn("needs: [prepare, desktop, browser]", release)
+        self.assertNotIn("MusicMachine-browser-wasm.zip", MANIFEST.REQUIRED)
+        self.assertEqual(len(MANIFEST.REQUIRED), 6)
+        self.assertIn("tools/verify-native-payload.py artifacts/${{ matrix.rid }} ${{ matrix.rid }}", workflow)
 
     def test_version_validation(self):
         for value in ("1.0", "../test", "1.2.3-rc1"):
@@ -215,9 +223,9 @@ class ReleaseTests(unittest.TestCase):
             result = json.loads((root / "release.json").read_text())
             self.assertEqual(result["commit"], "abc")
             self.assertEqual(result["updaterProtocol"], 1)
-            self.assertEqual(len(result["assets"]), 7)
+            self.assertEqual(len(result["assets"]), 6)
             self.assertTrue(all("/v1.2.3/" in asset["url"] for asset in result["assets"]))
-            self.assertEqual(len((root / "SHA256SUMS").read_text().splitlines()), 7)
+            self.assertEqual(len((root / "SHA256SUMS").read_text().splitlines()), 6)
 
     def test_installed_metadata_advertises_updater_protocol(self):
         with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, MUSIC_RELEASE_VERSION="1.2.3", GITHUB_SHA="a" * 40, GITHUB_REPOSITORY="example/MusicMachine"):

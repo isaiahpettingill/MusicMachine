@@ -126,6 +126,7 @@ public sealed class EditorControlTests
         FxReferenceIntegrationChecks.Run();
         PaneLayoutRegressionChecks.Run();
         PaneKeyboardRegressionChecks.Run();
+        DemoKeyboardRegressionChecks.Run();
         ArrangementIntegrationChecks.Run();
         EditorFieldFocusRegressionChecks.Run();
         UpdateUiRegressionChecks.Run();

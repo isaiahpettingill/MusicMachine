@@ -22,9 +22,28 @@ internal static class TrackerEditRecoveryChecks
         void KeyPress(Key key, KeyModifiers modifiers = KeyModifiers.None) => tracker.RaiseEvent(new KeyEventArgs { RoutedEvent = InputElement.KeyDownEvent, Key = key, KeyModifiers = modifiers });
         NoteEvent Note() => editor.Song.FindPattern(patternId)!.Tracks[0].Rows[2];
 
+        // Empty/unmodified FX drafts must not materialize absent columns, dirty
+        // startup, create undo entries, or erase the real effects around them.
+        var clean = SongFile.Write(editor.Song);
+        foreach (var column in new[] { 1, 2, 8 })
+        {
+            tracker.EffectColumns = 8; tracker.Select(2, 0, column);
+            Assert.True(tracker.CommitText("  "));
+            Assert.Equal(clean, SongFile.Write(editor.Song)); Assert.False(editor.IsDirty);
+            Assert.Equal(0, editor.Revision); Assert.False(editor.CanUndo); Assert.Empty(Note().Effects);
+        }
+        tracker.EffectColumns = 2;
+
         tracker.Select(2, 0); Assert.True(tracker.CommitText("G4"));
         tracker.Select(2, 0, 1); Assert.True(tracker.CommitText("V80"));
         var before = SongFile.Write(editor.Song); var revision = editor.Revision;
+        Assert.True(tracker.CommitText(" v80 "));
+        tracker.Select(2, 0, 2); Assert.True(tracker.CommitText(""));
+        Assert.Equal(before, SongFile.Write(editor.Song)); Assert.Equal(revision, editor.Revision);
+        tracker.Select(2, 0, 1); Assert.True(tracker.CommitText(""));
+        Assert.Equal("", Note().Effects[0]); Assert.Equal(revision + 1, editor.Revision);
+        Assert.True(editor.Undo()); tracker.SetSong(editor.Song, patternId);
+        Assert.Equal(before, SongFile.Write(editor.Song)); revision = editor.Revision;
         // Explicit commit rejects malformed FX, explains recovery and leaves the original intact.
         Type("8"); KeyPress(Key.Enter);
         Assert.Equal(2, tracker.SelectedRow); Assert.Equal(1, tracker.SelectedColumn);

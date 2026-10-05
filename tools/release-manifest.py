@@ -7,7 +7,7 @@ import sys
 
 REQUIRED = ["MusicMachine-win-x64-setup.exe", "MusicMachine-win-x64.zip",
             "MusicMachine-linux-x64.tar.gz", "install-musicmachine.sh", "install-musicmachine.ps1",
-            "MusicMachine-browser-wasm.zip", "MusicMachine-source.zip"]
+            "MusicMachine-source.zip"]
 
 
 def create(directory: Path):

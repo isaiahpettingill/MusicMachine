@@ -74,7 +74,7 @@ test('missing Pages secrets skip deployment without exposing values', async t =>
   const workflow = await readFile(new URL('../.github/workflows/pages.yml', import.meta.url), 'utf8');
   assert.match(workflow, /if: steps\.credentials\.outputs\.configured == 'true'/);
   const build = await readFile(new URL('../.github/workflows/build.yml', import.meta.url), 'utf8');
-  assert.match(build, /needs: \[prepare, desktop, browser\]/);
+  assert.match(build, /needs: \[prepare, desktop\]/);
   assert.doesNotMatch(build, /CLOUDFLARE_API_TOKEN/);
 });
 
@@ -88,4 +88,22 @@ test('deployment configuration uses the requested music-machine Pages project', 
   assert.doesNotMatch(workflow, /https:\/\/musicmachine\.pages\.dev/);
   const ensure = await readFile(new URL('./ensure-pages-project.mjs', import.meta.url), 'utf8');
   assert.match(ensure, /name: 'music-machine'/);
+});
+
+test('Pages requires its own successful trusted browser job, independent of native release status', async () => {
+  const { successfulBrowserBuild } = await import('./check-browser-build.mjs');
+  const run = { status: 'completed', conclusion: 'failure', name: 'Build and release', path: '.github/workflows/build.yml',
+    event: 'push', head_branch: 'main', head_sha: 'a'.repeat(40), head_repository: { full_name: 'owner/MusicMachine' } };
+  const jobs = { jobs: [{ name: 'browser', status: 'completed', conclusion: 'success' }, { name: 'desktop', conclusion: 'failure' }] };
+  assert.equal(successfulBrowserBuild(run, jobs, 'owner/MusicMachine'), true);
+  for (const conclusion of ['failure', 'cancelled', 'skipped', null])
+    assert.equal(successfulBrowserBuild(run, { jobs: [{ name: 'browser', status: 'completed', conclusion }] }, 'owner/MusicMachine'), false);
+  assert.equal(successfulBrowserBuild(run, { jobs: [] }, 'owner/MusicMachine'), false);
+  assert.equal(successfulBrowserBuild(run, { jobs: [jobs.jobs[0], jobs.jobs[0]] }, 'owner/MusicMachine'), false);
+  for (const change of [{ event: 'pull_request' }, { head_branch: 'build/untrusted' }, { status: 'in_progress' },
+    { path: 'other.yml' }, { head_sha: 'bad' }, { head_repository: { full_name: 'foreign/MusicMachine' } }])
+    assert.throws(() => successfulBrowserBuild({ ...run, ...change }, jobs, 'owner/MusicMachine'), /Untrusted/);
+  const workflow = await readFile(new URL('../.github/workflows/pages.yml', import.meta.url), 'utf8');
+  assert.match(workflow, /check-browser-build\.mjs/);
+  assert.doesNotMatch(workflow, /workflow_run\.conclusion == 'success'/);
 });
