@@ -123,7 +123,17 @@ public sealed partial class MainView
         if (mode != "Drums") return; var lanes = editor.Song.FindPattern(activePattern)?.Drums;
         if (lanes is { Count: > 0 }) selectedInstrument = lanes[Math.Clamp(selectedDrumLane, 0, lanes.Count - 1)].InstrumentId;
     }
-    private void TogglePane(bool left) { if (left) viewSettings.Library = !viewSettings.Library; else viewSettings.Inspector = !viewSettings.Inspector; UpdatePaneLayout(); SaveViewSettings(); RefreshChrome(); if (!left && !viewSettings.Inspector) RestoreInputFocus(); }
+    private void TogglePane(bool left)
+    {
+        if (left) viewSettings.Library = !viewSettings.Library; else viewSettings.Inspector = !viewSettings.Inspector;
+        UpdatePaneLayout(); SaveViewSettings();
+        // Only pane checks changed. RefreshChrome also resets the center picker,
+        // whose SelectionChanged can rebuild/detach the focused workspace while
+        // this key event is still routing, dropping the next browser shortcut.
+        if (libraryMenu is not null) libraryMenu.IsChecked = viewSettings.Library;
+        if (inspectorMenu is not null) inspectorMenu.IsChecked = viewSettings.Inspector;
+        RestoreInputFocus();
+    }
     private void UpdatePaneLayout()
     {
         if (panes is null) return; var inspect = viewSettings.Inspector && (mode != "Instrument" || ShowingFxReference);

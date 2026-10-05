@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, writeFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { deflateSync, gzipSync } from 'node:zlib';
-import { parsePagesHeaders, readPreparedAsset, viewPreferences, inspectPng, requireRenderedCanvas, renderedDifference } from '../tools/published-smoke/support.mjs';
+import { parsePagesHeaders, readPreparedAsset, viewPreferences, inspectPng, requireRenderedCanvas, renderedDifference, startupExpression, acceptStartup } from '../tools/published-smoke/support.mjs';
 import { audioObserverScript } from '../tools/published-smoke/audio-observer.mjs';
 
 test('prepared server honors actual Pages COOP/COEP and compressed-WASM headers without decoding content', async () => {
@@ -76,4 +76,52 @@ test('real demo shortcut holds and releases Control and Shift in the right order
     ]);
     assert.deepEqual(keyEvents('Space', ' ', 32).map(e => [e.type, e.modifiers]), [['rawKeyDown', 0], ['keyUp', 0]]);
     assert.equal(keyEvents('KeyI', 'i', 73, true).length, 4);
+});
+
+test('input diagnostics passively retain bounded key, modifier and focus evidence', async () => {
+    const { inputObserverScript } = await import('../tools/published-smoke/input-observer.mjs');
+    const { runInNewContext } = await import('node:vm');
+    const listeners = new Map(), windowListeners = new Map(), later = [];
+    const host = { nodeType: 1, tagName: 'DIV', id: 'out', contains: element => element === host };
+    const document = { activeElement: host, hasFocus: () => true, querySelector: () => host,
+        addEventListener: (name, handler) => listeners.set(name, handler) };
+    const context = { document, window: { addEventListener: (name, handler) => windowListeners.set(name, handler) },
+        setTimeout: callback => later.push(callback) };
+    runInNewContext(inputObserverScript, context);
+    const event = { type: 'keydown', code: 'KeyL', key: 'l', ctrlKey: true, shiftKey: false,
+        target: host, isTrusted: true, defaultPrevented: false };
+    listeners.get('keydown')(event);
+    event.defaultPrevented = true; document.activeElement = { nodeType: 1, tagName: 'BODY', id: '' };
+    for (const callback of later.splice(0)) callback();
+    const first = context.__musicMachineSmokeInput.snapshot();
+    assert.equal(first.sequence, 1); assert.equal(first.activeElement.inApp, false);
+    assert.equal(first.events[0].target.inApp, true); assert.equal(first.events[0].ctrl, true);
+    assert.equal(first.events[0].defaultPreventedAtCapture, false); assert.equal(first.events[0].defaultPreventedAfterDispatch, true);
+    assert.equal(first.events[0].focusAfterDispatch.activeElement.tag, 'BODY');
+    for (let i = 0; i < 200; i++) listeners.get('keyup')({ ...event, type: 'keyup' });
+    assert.equal(context.__musicMachineSmokeInput.snapshot().events.length, 160);
+    assert.deepEqual([...listeners.keys()], ['keydown', 'keyup', 'focusin', 'focusout']);
+    assert.deepEqual([...windowListeners.keys()], ['focus', 'blur']);
+    assert.doesNotThrow(() => windowListeners.get('blur')({ type: 'blur', target: context.window }));
+    assert.equal(context.__musicMachineSmokeInput.snapshot().events.at(-1).target.inApp, false);
+    assert.doesNotMatch(inputObserverScript, /\.focus\(|\.preventDefault\(|dispatchEvent\(|localStorage/);
+});
+
+// Evaluate the exact expressions sent to Chrome, without starting a browser.
+test('startup polling tolerates an absent document root without weakening readiness or failures', async () => {
+    const { runInNewContext } = await import('node:vm');
+    for (const required of [true, false]) {
+        const document = { documentElement: null, querySelector: () => null };
+        const observe = () => runInNewContext(startupExpression(required), { document });
+        assert.equal(acceptStartup(observe(), required), false, 'No root means keep polling');
+        document.documentElement = { dataset: {} };
+        assert.equal(acceptStartup(observe(), required), false, 'No signal or canvas means keep polling');
+        document.querySelector = () => ({});
+        assert.equal(acceptStartup(observe(), required), !required, 'A canvas alone only satisfies legacy mode');
+        document.documentElement.dataset.musicmachineReady = 'true';
+        assert.equal(acceptStartup(observe(), required), true);
+        document.documentElement.dataset.musicmachineReady = 'failed';
+        assert.throws(() => acceptStartup(observe(), required), /Published app reported startup failure/);
+    }
+    assert.equal(acceptStartup(true, true), false, 'Current builds require the string managed signal');
 });

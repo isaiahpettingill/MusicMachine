@@ -191,7 +191,12 @@ Primary references:
 `tools/smoke-published-app.mjs` serves the actual prepared Pages output, not a
 standalone JavaScript fixture. The browser job runs it after `prepare-pages`
 and retains `browser-app-smoke` PNGs, request diagnostics and a JSON report even
-when the smoke fails. It does not publish anything.
+when the smoke fails. It does not publish anything. The JSON also records native
+key/modifier delivery and DOM focus before/after each shortcut, plus the final
+input state on failure. This passive observer never cancels an event, restores
+focus, invokes a managed command, or changes preferences. Pane shortcuts run
+back-to-back without an intervening click or refocus, so losing keyboard input
+remains a failure rather than being hidden by the harness.
 
 ```sh
 CI=true CHROMIUM=/path/to/google-chrome \

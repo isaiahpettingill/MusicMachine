@@ -7,8 +7,9 @@ import { resolve, join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
-import { parsePagesHeaders, readPreparedAsset, viewPreferences, inspectPng, requireRenderedCanvas, renderedDifference } from './published-smoke/support.mjs';
+import { parsePagesHeaders, readPreparedAsset, viewPreferences, inspectPng, requireRenderedCanvas, renderedDifference, startupExpression, acceptStartup } from './published-smoke/support.mjs';
 import { audioObserverScript } from './published-smoke/audio-observer.mjs';
+import { inputObserverScript } from './published-smoke/input-observer.mjs';
 import { keyEvents } from './published-smoke/key-events.mjs';
 
 if (process.env.CI !== 'true') throw new Error('Published-app browser smoke is CI-only. Do not use it to bypass a local browser/socket restriction.');
@@ -23,7 +24,7 @@ await mkdir(evidence, { recursive: true });
 const temporary = await mkdtemp(join(tmpdir(), 'musicmachine-published-smoke-'));
 const requests = [], network = [], failures = [], warnings = [], pending = new Map();
 const requireReadySignal = process.env.MUSICMACHINE_REQUIRE_READY_SIGNAL !== 'false';
-const report = { build, passed: false, checks: [], screenshots: [], proof: 'Real published Avalonia app, native Chrome Web Audio and keyboard events. No physical speaker/heard-audio claim.' };
+const report = { build, passed: false, checks: [], screenshots: [], keyboard: [], proof: 'Real published Avalonia app, native Chrome Web Audio and keyboard events. No physical speaker/heard-audio claim.' };
 let server, browser, sessionId, stderr = '', messageId = 0, incoming = '', closing = false, navigating = false;
 let exited = false;
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -56,17 +57,10 @@ async function until(label, expression, accept = value => !!value, timeout = 120
 }
 const canvasExpression = `(() => { const list=[...document.querySelectorAll('#out canvas')].filter(c=>c.width>=600&&c.height>=400&&c.getBoundingClientRect().width>=600); const c=list[0]; if(!c)return null; const r=c.getBoundingClientRect(); return {x:r.x,y:r.y,width:r.width,height:r.height,bitmapWidth:c.width,bitmapHeight:c.height}; })()`;
 async function ready() {
-    if (requireReadySignal) {
-        await until('App runtime readiness', `document.documentElement.dataset.musicmachineReady`, value => {
-            if (value === 'failed') throw new Error('Published app reported startup failure'); return value === 'true';
-        });
-    } else {
-        // Explicit compatibility for already-published older artifacts. The
-        // canvas pixels, managed keyboard responses and real audio still must pass.
-        await until('Legacy Avalonia host', `document.documentElement.dataset.musicmachineReady === 'failed' ? 'failed' : !!document.querySelector('#out.avalonia-container canvas')`, value => {
-            if (value === 'failed') throw new Error('Published app reported startup failure'); return value === true;
-        });
-    }
+    // Legacy compatibility still requires canvas pixels, managed keyboard
+    // responses and real audio; current builds require the managed ready signal.
+    await until(requireReadySignal ? 'App runtime readiness' : 'Legacy Avalonia host',
+        startupExpression(requireReadySignal), value => acceptStartup(value, requireReadySignal));
     report.startupSignalRequired = requireReadySignal;
     const canvas = await until('Avalonia rendering canvas', canvasExpression);
     await evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
@@ -93,7 +87,15 @@ async function focusApp(canvas) {
     await command('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 });
 }
 async function key(code, key, number, ctrl = false, shift = false) {
+    const before = await evaluate('__musicMachineSmokeInput.snapshot()');
+    const entry = { code, key, ctrl, shift, before }; report.keyboard.push(entry);
+    assert.equal(before.activeElement?.inApp, true, `App must retain keyboard focus before ${code}; see report.keyboard`);
     for (const event of keyEvents(code, key, number, ctrl, shift)) await command('Input.dispatchKeyEvent', event);
+    entry.after = await evaluate('__musicMachineSmokeInput.snapshot()');
+    const received = entry.after.events.filter(event => event.sequence > before.sequence && event.code === code);
+    assert.ok(received.some(event => event.type === 'keydown' && event.target?.inApp && event.ctrl === ctrl && event.shift === shift),
+        `Native ${code} keydown must reach the Avalonia host with expected modifiers; see report.keyboard`);
+    assert.ok(received.some(event => event.type === 'keyup'), `Native ${code} keyup must arrive; see report.keyboard`);
 }
 async function prefs() { return viewPreferences(await evaluate(`localStorage.getItem('musicmachine.views')`)); }
 async function expectPref(name, value) { await until(`Preference ${name}=${value}`, `localStorage.getItem('musicmachine.views')`, text => viewPreferences(text)[name] === value, 10000); }
@@ -145,6 +147,7 @@ try {
     await command('Page.enable'); await command('Page.bringToFront'); await command('Runtime.enable'); await command('Network.enable'); await command('Log.enable');
     await command('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
     await command('Page.addScriptToEvaluateOnNewDocument', { source: audioObserverScript });
+    await command('Page.addScriptToEvaluateOnNewDocument', { source: inputObserverScript });
     navigating = true; await command('Page.navigate', { url: origin + '/' });
     let canvas = await ready(); navigating = false; await delay(300); checkFailures();
     const initial = await prefs(); const initialImage = await screenshot('01-startup.png', canvas, 30000);
@@ -210,6 +213,7 @@ try {
 } catch (error) {
     report.failure = error.stack ?? String(error);
     if (browser && !exited && sessionId) {
+        try { report.failureInput = await evaluate('__musicMachineSmokeInput?.snapshot()'); } catch {}
         try { const shot = await command('Page.captureScreenshot', { format: 'png', fromSurface: true }); await writeFile(join(evidence, 'failure.png'), Buffer.from(shot.data, 'base64')); } catch {}
     }
     console.error(report.failure); process.exitCode = 1;

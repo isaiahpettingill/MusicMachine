@@ -2,6 +2,18 @@ import { readFile, realpath, stat } from 'node:fs/promises';
 import { extname, resolve, sep } from 'node:path';
 import { inflateSync } from 'node:zlib';
 
+// Page.navigate may resolve before the new document has an <html> element.
+// Keep polling during that transient state, but never treat it as readiness.
+export function startupExpression(requireReadySignal) {
+    const signal = 'document.documentElement?.dataset.musicmachineReady';
+    return requireReadySignal ? signal
+        : `${signal} === 'failed' ? 'failed' : !!document.querySelector('#out.avalonia-container canvas')`;
+}
+export function acceptStartup(value, requireReadySignal) {
+    if (value === 'failed') throw new Error('Published app reported startup failure');
+    return value === (requireReadySignal ? 'true' : true);
+}
+
 const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
     '.json': 'application/json', '.wasm': 'application/wasm', '.gz': 'application/gzip', '.css': 'text/css; charset=utf-8',
     '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.png': 'image/png', '.woff': 'font/woff', '.woff2': 'font/woff2',

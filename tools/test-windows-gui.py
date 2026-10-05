@@ -1,4 +1,4 @@
-"""Smoke the actual published Windows window, rendering, help, resize and shutdown.
+"""Smoke the actual published Windows window, rendering, modal help, resize and shutdown.
 
 This is deliberately separate from the standard-user installer test. A successful
 GUI smoke under a hosted runner's token does not prove installer/update privileges.
@@ -42,6 +42,29 @@ def changed_pixels(before, after):
     return sum(before[p:p + 3] != after[p:p + 3] for p in range(0, len(before), 4))
 
 
+def select_window(windows, pid, title=None, owner=None):
+    """Do not confuse a native owned dialog with content inside its owner."""
+    matches = [window for window in windows if window["pid"] == pid and window["visible"]
+               and (window["title"] == title if title is not None else "MusicMachine" in window["title"])
+               and (window["owner"] == owner if owner is not None else not window["owner"])]
+    if len(matches) > 1:
+        raise RuntimeError("Ambiguous native test window: " + repr(matches))
+    return matches[0]["hwnd"] if matches else None
+
+
+def wait_for(predicate, process, message, timeout=10):
+    deadline = time.monotonic() + timeout
+    while True:
+        if process.poll() is not None:
+            raise RuntimeError(f"Native GUI exited during {message} ({process.returncode})")
+        result = predicate()
+        if result:
+            return result
+        if time.monotonic() >= deadline:
+            raise RuntimeError(message)
+        time.sleep(0.1)
+
+
 class Windows:
     def __init__(self):
         self.user = ctypes.WinDLL("user32", use_last_error=True)
@@ -56,6 +79,8 @@ class Windows:
         bind(self.user, "EnumWindows", wintypes.BOOL, [self.callback, wintypes.LPARAM])
         bind(self.user, "GetWindowThreadProcessId", wintypes.DWORD, [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)])
         bind(self.user, "IsWindowVisible", wintypes.BOOL, [wintypes.HWND])
+        bind(self.user, "IsWindowEnabled", wintypes.BOOL, [wintypes.HWND])
+        bind(self.user, "GetWindow", wintypes.HWND, [wintypes.HWND, wintypes.UINT])
         bind(self.user, "GetWindowTextW", ctypes.c_int, [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int])
         bind(self.user, "GetClientRect", wintypes.BOOL, [wintypes.HWND, ctypes.POINTER(wintypes.RECT)])
         bind(self.user, "SetWindowPos", wintypes.BOOL, [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.UINT])
@@ -72,7 +97,7 @@ class Windows:
         bind(self.gdi, "DeleteDC", wintypes.BOOL, [wintypes.HDC])
         bind(self.gdi, "GdiFlush", wintypes.BOOL, [])
 
-    def window(self, pid):
+    def inventory(self, pid):
         found = []
         @self.callback
         def visit(hwnd, _):
@@ -80,12 +105,22 @@ class Windows:
             self.user.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
             title = ctypes.create_unicode_buffer(1024)
             self.user.GetWindowTextW(hwnd, title, len(title))
-            if owner.value == pid and self.user.IsWindowVisible(hwnd) and "MusicMachine" in title.value:
-                found.append(hwnd)
+            if owner.value == pid:
+                found.append({"hwnd": hwnd, "pid": owner.value, "title": title.value,
+                              "visible": bool(self.user.IsWindowVisible(hwnd)),
+                              "enabled": bool(self.user.IsWindowEnabled(hwnd)),
+                              "owner": self.user.GetWindow(hwnd, 4) or 0})  # GW_OWNER
             return True
         if not self.user.EnumWindows(visit, 0):
             raise ctypes.WinError(ctypes.get_last_error())
-        return found[0] if found else None
+        return found
+
+    def window(self, pid, title=None, owner=None):
+        return select_window(self.inventory(pid), pid, title, owner)
+
+    def close(self, hwnd):
+        if not self.user.PostMessageW(hwnd, 0x10, 0, 0):  # Native caption-close action, WM_CLOSE.
+            raise ctypes.WinError(ctypes.get_last_error())
 
     def responsive(self, hwnd):
         result = ctypes.c_size_t()
@@ -104,13 +139,13 @@ class Windows:
             if not self.user.PostMessageW(hwnd, message, key, flags | scan << 16):
                 raise ctypes.WinError(ctypes.get_last_error())
 
-    def capture(self, hwnd, destination):
+    def capture(self, hwnd, destination, minimum_size=(800, 500)):
         self.responsive(hwnd)
         rect = wintypes.RECT()
         if not self.user.GetClientRect(hwnd, ctypes.byref(rect)):
             raise ctypes.WinError(ctypes.get_last_error())
         width, height = rect.right, rect.bottom
-        if not 800 <= width <= 4096 or not 500 <= height <= 4096:
+        if not minimum_size[0] <= width <= 4096 or not minimum_size[1] <= height <= 4096:
             raise RuntimeError(f"Unexpected native window size: {width}x{height}")
         # A real window DC observes the production rendering path, unlike
         # rendering Avalonia controls into a separate test-only bitmap.
@@ -170,22 +205,36 @@ def run(payload, output):
                             time.sleep(2)
                             frame, details = windows.capture(hwnd, output / f"launch-{launch}-size-{index}.png")
                             report["stages"].append({"launch": launch, "stage": "window-resize", **details})
-                        windows.key(hwnd, 0x70, 0x3b)  # F1: real keyboard event opens help.
-                        time.sleep(1)
-                        help_frame, details = windows.capture(hwnd, output / f"launch-{launch}-help.png")
-                        changed = changed_pixels(frame, help_frame)
-                        if changed < 1000:
-                            raise RuntimeError("F1 did not visibly open the native help overlay")
-                        report["stages"].append({"launch": launch, "stage": "help-open", "changedPixels": changed, **details})
-                        windows.key(hwnd, 0x1b, 0x01)  # Escape: dismiss overlay, leave document clean.
-                        time.sleep(1)
-                        closed_frame, details = windows.capture(hwnd, output / f"launch-{launch}-help-closed.png")
-                        if changed_pixels(help_frame, closed_frame) < 1000:
-                            raise RuntimeError("Escape did not visibly dismiss the native help overlay")
-                        report["stages"].append({"launch": launch, "stage": "help-close", **details})
+                        for attempt in range(2):
+                            if windows.window(process.pid, "Make a loop", hwnd):
+                                raise RuntimeError("Unexpected help dialog before F1")
+                            if not windows.user.IsWindowEnabled(hwnd):
+                                raise RuntimeError("Main window disabled before the help test")
+                            windows.key(hwnd, 0x70, 0x3b)  # F1: actual native keyboard event.
+                            try:
+                                dialog = wait_for(lambda: windows.window(process.pid, "Make a loop", hwnd),
+                                                  process, "F1 did not open the owned native help window")
+                            finally:
+                                report["windowsAfterF1"] = windows.inventory(process.pid)
+                            # Desktop help is a separate owned modal HWND; only the
+                            # browser uses an overlay inside the editor framebuffer.
+                            # Require correct ownership, modality AND visible pixels.
+                            wait_for(lambda: not windows.user.IsWindowEnabled(hwnd), process,
+                                     "Help did not disable its modal owner")
+                            time.sleep(1)
+                            _, details = windows.capture(dialog, output / f"launch-{launch}-help-{attempt}.png", (300, 160))
+                            report["stages"].append({"launch": launch, "attempt": attempt, "stage": "help-open",
+                                                     "title": "Make a loop", "modalOwnerDisabled": True, **details})
+                            windows.close(dialog)
+                            wait_for(lambda: not windows.window(process.pid, "Make a loop", hwnd)
+                                     and windows.user.IsWindowEnabled(hwnd), process,
+                                     "Closing native help did not restore the editor")
+                            time.sleep(0.3)
+                            _, details = windows.capture(hwnd, output / f"launch-{launch}-help-closed-{attempt}.png")
+                            report["stages"].append({"launch": launch, "attempt": attempt, "stage": "help-close",
+                                                     "modalOwnerEnabled": True, **details})
                         windows.responsive(hwnd)
-                        if not windows.user.PostMessageW(hwnd, 0x10, 0, 0):  # WM_CLOSE
-                            raise ctypes.WinError(ctypes.get_last_error())
+                        windows.close(hwnd)
                         if process.wait(timeout=20) != 0:
                             raise RuntimeError(f"Native GUI exited with failure ({process.returncode})")
                     finally:
@@ -193,7 +242,7 @@ def run(payload, output):
                             process.kill()
                             process.wait(timeout=10)
         report["passed"] = True
-        print("Actual Windows NativeAOT GUI rendered, resized, opened/dismissed help and closed cleanly twice")
+        print("Actual Windows NativeAOT GUI rendered, resized, opened/closed owned native help twice per launch and closed cleanly twice")
     except BaseException:
         report["passed"] = False
         report["error"] = traceback.format_exc()

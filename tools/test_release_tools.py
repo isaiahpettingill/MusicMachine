@@ -22,6 +22,7 @@ MANIFEST = module("release-manifest.py")
 INSTALLER = module("package-linux-installer.py")
 DESKTOP = module("prepare-desktop.py")
 WINDOWS_GUI = module("test-windows-gui.py")
+WINDOWS_CI = module("windows_ci_policy.py")
 
 class ReleaseTests(unittest.TestCase):
     def test_windows_gui_png_preserves_color_and_dimensions(self):
@@ -57,6 +58,32 @@ class ReleaseTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             WINDOWS_GUI.changed_pixels(before, b"")
 
+    def test_windows_gui_selects_exact_owned_modal_instead_of_main_framebuffer(self):
+        windows = [
+            {"hwnd": 100, "pid": 42, "visible": True, "title": "Untitled song · MusicMachine", "owner": 0},
+            {"hwnd": 200, "pid": 42, "visible": True, "title": "Make a loop", "owner": 100},
+            {"hwnd": 300, "pid": 43, "visible": True, "title": "Make a loop", "owner": 100},
+            {"hwnd": 400, "pid": 42, "visible": True, "title": "Other dialog", "owner": 100},
+            {"hwnd": 500, "pid": 42, "visible": False, "title": "Make a loop", "owner": 100},
+            {"hwnd": 600, "pid": 42, "visible": True, "title": "Make a loop", "owner": 999},
+        ]
+        self.assertEqual(WINDOWS_GUI.select_window(windows, 42), 100)
+        self.assertEqual(WINDOWS_GUI.select_window(windows, 42, "Make a loop", 100), 200)
+        self.assertIsNone(WINDOWS_GUI.select_window(windows[2:], 42, "Make a loop", 100))
+        with self.assertRaisesRegex(RuntimeError, "Ambiguous"):
+            WINDOWS_GUI.select_window(windows + [dict(windows[1], hwnd=201)], 42, "Make a loop", 100)
+
+    def test_windows_gui_wait_requires_observed_success_and_live_process(self):
+        from unittest.mock import Mock
+        process = Mock()
+        process.poll.return_value = None
+        self.assertEqual(WINDOWS_GUI.wait_for(lambda: 200, process, "not observed", timeout=0), 200)
+        with self.assertRaisesRegex(RuntimeError, "not observed"):
+            WINDOWS_GUI.wait_for(lambda: None, process, "not observed", timeout=0)
+        process.poll.return_value = 1
+        with self.assertRaisesRegex(RuntimeError, "Native GUI exited"):
+            WINDOWS_GUI.wait_for(lambda: 200, process, "not observed", timeout=0)
+
     def test_windows_gui_smoke_refuses_non_windows(self):
         with patch.object(WINDOWS_GUI.sys, "platform", "linux"):
             with self.assertRaisesRegex(RuntimeError, "no GUI was tested"):
@@ -76,6 +103,49 @@ class ReleaseTests(unittest.TestCase):
         self.assertNotIn("SetTokenInformation", script)
         self.assertNotIn("AdjustTokenPrivileges", script)
         self.assertNotIn("CreateRestrictedToken", script)
+
+    def test_windows_ci_waiver_is_opt_in_and_only_matches_known_hosted_runner(self):
+        environment = {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted", "RUNNER_OS": "Windows"}
+        arguments = ["--allow-unsupported-ci-runner"]
+        error = WINDOWS_CI.UnsupportedStandardUserRunner("SAFER NORMALUSER: elevation=False, integrity=0x3000")
+        with tempfile.TemporaryDirectory() as temp, patch("builtins.print"):
+            summary = Path(temp) / "summary.md"
+            summary.write_text("Existing steps\n")
+            complete = dict(environment, GITHUB_STEP_SUMMARY=str(summary))
+            self.assertTrue(WINDOWS_CI.record_unsupported_runner_skip(error, arguments, complete))
+            text = summary.read_text()
+            self.assertTrue(text.startswith("Existing steps\n"))
+            self.assertIn("SKIPPED", text)
+            self.assertIn("**not verified**", text)
+            self.assertIn("integrity=0x3000", text)
+            self.assertFalse(WINDOWS_CI.record_unsupported_runner_skip(error, [], complete))
+            for key in environment:
+                incomplete = dict(complete)
+                incomplete.pop(key)
+                self.assertFalse(WINDOWS_CI.record_unsupported_runner_skip(error, arguments, incomplete))
+            for replacement in ({"RUNNER_ENVIRONMENT": "self-hosted"}, {"RUNNER_OS": "Linux"}, {"GITHUB_ACTIONS": "false"}):
+                self.assertFalse(WINDOWS_CI.record_unsupported_runner_skip(error, arguments, dict(complete, **replacement)))
+            for failure in (RuntimeError("actual installation failed"), AssertionError("elevated setup accepted"), OSError("token API failed")):
+                self.assertFalse(WINDOWS_CI.record_unsupported_runner_skip(failure, arguments, complete))
+            self.assertEqual(text, summary.read_text(), "Rejected waiver requests must not append a skip")
+
+    def test_windows_ci_waiver_cannot_catch_install_or_elevated_refusal_failures(self):
+        import ast
+        script = (TOOLS / "test-windows-installer.py").read_text()
+        handlers = [node for node in ast.walk(ast.parse(script)) if isinstance(node, ast.ExceptHandler)
+                    and isinstance(node.type, ast.Name) and node.type.id == "UnsupportedStandardUserRunner"]
+        self.assertEqual(len(handlers), 1)
+        self.assertLess(script.index('assert result.returncode == 2, "Elevated setup was not refused"'),
+                        script.index("except UnsupportedStandardUserRunner as error:"))
+        workflow = (TOOLS.parent / ".github/workflows/build.yml").read_text()
+        self.assertIn("python tools/test-windows-installer.py --source-check", workflow)
+        self.assertIn("artifacts/win-x64 --allow-unsupported-ci-runner", workflow)
+        self.assertNotIn("continue-on-error:", workflow)
+        installer_step = workflow.split("      - name: Build and test Windows installer", 1)[1].split("      - name:", 1)[0]
+        commands = re.findall(r"^          python .*\n(.*)", installer_step, re.M)
+        self.assertEqual(len(commands), 3)
+        self.assertTrue(all(line.strip() == "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }" for line in commands),
+                        "PowerShell must stop after each failed native command, not only the final one")
 
     def test_first_release(self):
         self.assertEqual(VERSION.choose_version("0.1.0", "abc", "refs/heads/main", "push", [], {}), ("0.1.0", True))

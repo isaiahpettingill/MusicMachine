@@ -114,7 +114,11 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           python tools/package-windows-installer.py artifacts/win-x64 MusicMachine-win-x64-setup.exe
-          python tools/test-windows-installer.py MusicMachine-win-x64-setup.exe artifacts/win-x64
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tools/test-windows-installer.py --source-check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tools/test-windows-installer.py MusicMachine-win-x64-setup.exe artifacts/win-x64 --allow-unsupported-ci-runner
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Copy-Item tools/install-windows.ps1 install-musicmachine.ps1
       - name: Archive Linux app and build version-pinned installer
         if: runner.os == 'Linux'

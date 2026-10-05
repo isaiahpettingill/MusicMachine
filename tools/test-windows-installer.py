@@ -10,6 +10,8 @@ import subprocess
 import sys
 import tempfile
 import time
+from windows_ci_policy import UnsupportedStandardUserRunner, record_unsupported_runner_skip
+
 def verify_installer_source():
     """Portable structural checks only; never claim Windows execution coverage."""
     source = Path(__file__).with_name("windows-installer.nsi").read_text()
@@ -108,11 +110,14 @@ def run_with_test_user_token():
         elevated, integrity = token_is_elevated(token), token_integrity_rid(token)
         print(f"Windows test token: source={source}, elevated={elevated}, integrity=0x{integrity:04x}", flush=True)
         if elevated or integrity > 0x2000:
-            raise RuntimeError(f"WINDOWS INSTALLER VERIFICATION BLOCKED: {source} token "
-                               f"has elevation={elevated}, integrity=0x{integrity:04x}; a genuine "
-                               "standard-user Windows runner/session is required. GitHub-hosted "
-                               "Windows runs as administrator with UAC disabled. No token properties, "
-                               "accounts or security policy were changed. No real install was verified.")
+            message = (f"WINDOWS INSTALLER VERIFICATION BLOCKED: {source} token "
+                       f"has elevation={elevated}, integrity=0x{integrity:04x}; a genuine "
+                       "standard-user Windows runner/session is required. GitHub-hosted "
+                       "Windows runs as administrator with UAC disabled. No token properties, "
+                       "accounts or security policy were changed. No real install was verified.")
+            if source == "SAFER NORMALUSER":
+                raise UnsupportedStandardUserRunner(message)
+            raise RuntimeError(message)
         class StartupInfo(ctypes.Structure):
             _fields_ = [("cb", wintypes.DWORD), ("lpReserved", wintypes.LPWSTR),
                         ("lpDesktop", wintypes.LPWSTR), ("lpTitle", wintypes.LPWSTR),
@@ -223,7 +228,12 @@ try:
                 result = subprocess.run(f'"{setup}" /S {mode} /D={destination}', timeout=120)
                 assert result.returncode == 2, "Elevated setup was not refused"
                 assert not destination.exists(), "Elevated setup wrote an installation directory"
-        run_with_test_user_token()
+        try:
+            run_with_test_user_token()
+        except UnsupportedStandardUserRunner as error:
+            if not record_unsupported_runner_skip(error, sys.argv):
+                raise
+            sys.exit(0)
         print("Windows setup elevated refusal and genuine standard-user-token runtime suite verified")
         sys.exit(0)
 finally:

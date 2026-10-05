@@ -123,6 +123,7 @@ public sealed class EditorControlTests
         StartupUiRegressionChecks.Run();
         FxReferencePanelChecks.Run();
         FxReferenceIntegrationChecks.Run();
+        PaneKeyboardRegressionChecks.Run();
         UpdateUiRegressionChecks.Run();
     }
 }
