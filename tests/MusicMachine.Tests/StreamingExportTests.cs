@@ -215,8 +215,12 @@ public sealed class StreamingExportTests
         {
             string path = Path.Combine(directory, "occupied"); Directory.CreateDirectory(path);
             File.WriteAllText(Path.Combine(path, "keep"), "keep");
-            Assert.ThrowsAny<IOException>(() => Write(path, Tone(), qoa));
-            await Assert.ThrowsAnyAsync<IOException>(() => WriteAsync(path, Tone(), qoa));
+            // Windows reports access denied for a directory destination; Unix reports
+            // an I/O error. Both are expected replacement failures, never success.
+            var synchronous = Record.Exception(() => Write(path, Tone(), qoa));
+            Assert.True(synchronous is IOException or UnauthorizedAccessException, $"Unexpected replacement result: {synchronous}");
+            var asynchronous = await Record.ExceptionAsync(() => WriteAsync(path, Tone(), qoa));
+            Assert.True(asynchronous is IOException or UnauthorizedAccessException, $"Unexpected replacement result: {asynchronous}");
             Assert.Equal("keep", File.ReadAllText(Path.Combine(path, "keep")));
             Assert.Empty(Directory.GetFiles(directory)); Assert.Single(Directory.GetDirectories(directory));
         }

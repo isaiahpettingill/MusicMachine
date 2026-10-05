@@ -47,7 +47,6 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           global-json-file: global.json
-          include-prerelease: true
       - run: dotnet test tests/MusicMachine.Tests -c Release
       - uses: actions/setup-node@v4
         with:
@@ -82,7 +81,6 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           global-json-file: global.json
-          include-prerelease: true
       - name: Install Linux native build and audio dependencies
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev libsdl2-2.0-0 ffmpeg
@@ -133,7 +131,6 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           global-json-file: global.json
-          include-prerelease: true
       - name: Install pinned WebAssembly toolchain
         run: dotnet workload install wasm-tools --skip-manifest-update
       - uses: actions/setup-node@v4
