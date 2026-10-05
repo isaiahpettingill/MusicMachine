@@ -1,5 +1,5 @@
 import { loadConverterAssets } from './conversion-assets.js';
-import { convertWithCore, throttleProgress } from './conversion-worker-core.js';
+import { initializeCore, convertWithCore, throttleProgress } from './conversion-worker-core.js';
 let started = false;
 self.onmessage = async ({ data }) => {
     if (started) return;
@@ -12,9 +12,7 @@ self.onmessage = async ({ data }) => {
         progress({ phase: 'initialize', progress: 0 });
         coreUrl = URL.createObjectURL(new Blob([js], { type: 'text/javascript' }));
         const factory = (await import(coreUrl)).default;
-        // Supplying verified bytes avoids any core-initiated fetch. The placeholder
-        // is only used to resolve the generated glue's filename under a blob URL.
-        const core = await factory({ wasmBinary: wasm, locateFile: () => 'data:application/wasm;base64,' });
+        const core = await initializeCore(factory, wasm);
         const result = await convertWithCore(core, name, bytes, progress);
         self.postMessage({ id, type: 'result', bytes: result }, [result.buffer]);
     } catch (error) {

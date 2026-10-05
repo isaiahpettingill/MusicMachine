@@ -1,5 +1,22 @@
 import { CONVERSION_LIMITS as limits, conversionExtension } from './conversion-policy.js';
 
+export async function initializeCore(factory, wasm) {
+    // Emscripten 6's default incoming Module API includes instantiateWasm, but
+    // not wasmBinary. Compile our verified bytes explicitly; otherwise the glue
+    // ignores wasmBinary and falls back to fetching a file (even in Node tests).
+    const module = await WebAssembly.compile(wasm);
+    return factory({
+        instantiateWasm(imports, receiveInstance) {
+            // Keep this callback synchronous so link/initialization errors reject
+            // the factory promise instead of leaving its callback pending forever.
+            const instance = new WebAssembly.Instance(module, imports);
+            receiveInstance(instance, module);
+            return instance.exports;
+        },
+        locateFile() { throw new Error('Audio converter cannot load an unverified runtime file.'); }
+    });
+}
+
 export function waveFrameCount(bytes) {
     if (!(bytes instanceof Uint8Array) || bytes.length < 44 || bytes.length > limits.outputBytes) throw new Error('Converted audio exceeds the supported size.');
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);

@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import factory from '../.ffmpeg-build/output/ffmpeg-core.js';
-import { convertWithCore, waveFrameCount } from '../wwwroot/conversion-worker-core.js';
+import { initializeCore, convertWithCore, waveFrameCount } from '../wwwroot/conversion-worker-core.js';
 const temporary = await mkdtemp(join(tmpdir(), 'musicmachine-audio-formats-'));
 const wasmBinary = await readFile(new URL('../.ffmpeg-build/output/ffmpeg-core.wasm', import.meta.url));
 const formats = [['mp3', 'libmp3lame'], ['flac', 'flac'], ['ogg', 'libvorbis'], ['opus', 'libopus'], ['m4a', 'aac'], ['aac', 'aac'], ['aif', 'pcm_s16be'], ['aiff', 'pcm_s24be'], ['wma', 'wmav2'], ['caf', 'pcm_s16le']];
@@ -16,7 +16,7 @@ try {
         const inputPath = join(temporary, 'tone.' + extension), referencePath = join(temporary, extension + '.pcm');
         execFileSync('ffmpeg', ['-v', 'error', '-nostdin', '-y', '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=44100:duration=0.5', '-c:a', encoder, inputPath], { timeout: 15000 });
         execFileSync('ffmpeg', ['-v', 'error', '-nostdin', '-y', '-i', inputPath, '-ac', '1', '-ar', '48000', '-f', 's16le', referencePath], { timeout: 15000 });
-        const core = await factory({ wasmBinary });
+        const core = await initializeCore(factory, wasmBinary);
         const wave = await convertWithCore(core, 'tone.' + extension, new Uint8Array(await readFile(inputPath)));
         const frames = waveFrameCount(wave), reference = await readFile(referencePath);
         if (extension === 'm4a' && reference.length !== frames * 2) {

@@ -130,6 +130,13 @@ runtime version. Cache hits are reverified; corruption causes replacement and
 cache/storage denial falls back to verified loading. Old versions are cleared
 only after the replacement is verified. No binary is checked into git.
 
+The worker compiles the verified WASM bytes and supplies the generated loader's
+`instantiateWasm` callback. This pinned Emscripten build does not enable the
+optional `wasmBinary` incoming Module API, so passing that property alone is
+ignored. Loader-initiated file resolution is rejected; no placeholder URL or
+second, unverified WASM download is used. Compilation is asynchronous and the
+instance callback is synchronous so initialization errors reject normally.
+
 ### Source, licenses and relinking
 
 FFmpeg's selected configuration and runtime license report LGPL-2.1-or-later.
@@ -153,21 +160,24 @@ check is not a legal certification or patent assessment.
 
 ### Verification
 
-Passed locally: Browser C# Compile, 27 Node bridge/unit/helper tests, 9 actual-WASM/cache
+Passed locally: Browser C# Compile, 37 Node bridge/unit/helper tests, 9 actual-WASM/cache
 integration tests, signed-source/toolchain checksum checks, a clean reproducible
 rebuild, and synthetic conversions for all ten advertised extensions against
 native FFmpeg. Differences were at least 94 dB SNR; the newer MOV decoder removes
 trailing AAC padding retained by the older native reference. Tests cover corrupt
 inputs/cache, chunk/whole-file integrity, cancel/error/timeout/stale worker
 lifecycle, exact output limits and failed allocations at the hard memory maximum.
+Runtime tests import the verified glue in an isolated directory with no adjacent
+WASM file, then use the same initialization helper as the browser worker. This
+prevents Node's filesystem fallback from masking browser loader regressions.
 
 Actual Chromium worker/UI smoke and full Avalonia browser publish are still
 unverified locally: this environment denies required Unix sockets, including an
 escalated isolated Chromium attempt. No GUI reroute was used. The browser CI job
 builds the pinned core, runs all checks and a real isolated Chrome worker smoke
 (lazy download, cache reuse, cancellation/retry, same-origin requests, malformed
-input and long-input rejection) before publication. CI has not been run for these
-unpublished changes, so its future result is not claimed as a pass.
+input and long-input rejection) before publication. Local tests do not establish
+a pass for that actual-browser CI gate.
 
 Primary references:
 - [Official FFmpeg releases and signature fingerprint](https://ffmpeg.org/download.html)

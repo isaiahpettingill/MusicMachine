@@ -2,11 +2,13 @@
 // Executes the actual WASM core in a Node worker-like environment, NOT a browser.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
-import { fileURLToPath } from 'node:url';
+import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { loadConverterAssets, sha256 } from '../wwwroot/conversion-assets.js';
 import { CONVERSION_LIMITS as limits, FFMPEG_PIN as pin } from '../wwwroot/conversion-policy.js';
-import { convertWithCore, waveFrameCount } from '../wwwroot/conversion-worker-core.js';
+import { initializeCore, convertWithCore, waveFrameCount } from '../wwwroot/conversion-worker-core.js';
 const runtime = new URL(`../wwwroot/vendor/ffmpeg/${pin.runtime}/`, import.meta.url);
 const manifest = JSON.parse(await readFile(new URL('manifest.json', runtime)));
 const cache = new Map();
@@ -45,9 +47,17 @@ test('aborting an asset download stops before the next chunk and never returns a
 });
 let factory;
 async function createCore() {
-    globalThis.self = { location: { href: fileURLToPath(runtime) } };
-    factory ??= (await import('../.ffmpeg-build/output/ffmpeg-core.js')).default;
-    return factory({ wasmBinary: loaded.wasm });
+    if (!factory) {
+        // Import the exact verified glue with no adjacent WASM file. A fallback
+        // filesystem read must not hide broken in-memory initialization again.
+        const isolated = await mkdtemp(join(tmpdir(), 'musicmachine-core-loader-'));
+        try {
+            const script = join(isolated, 'ffmpeg-core.mjs');
+            await writeFile(script, loaded.js);
+            factory = (await import(pathToFileURL(script).href)).default;
+        } finally { await rm(isolated, { recursive: true, force: true }); }
+    }
+    return initializeCore(factory, loaded.wasm);
 }
 test('source-built WASM decodes MP3 and FLAC; license/configuration and heap bounds agree', async () => {
     for (const extension of ['mp3', 'flac']) {

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createAudioConverter } from '../wwwroot/conversion.js';
-import { waveFrameCount, convertWithCore } from '../wwwroot/conversion-worker-core.js';
+import { initializeCore, waveFrameCount, convertWithCore } from '../wwwroot/conversion-worker-core.js';
 import { CONVERSION_LIMITS as limits, FFMPEG_PIN as pin } from '../wwwroot/conversion-policy.js';
 import { validateManifest, readBoundedResponse } from '../wwwroot/conversion-assets.js';
 function wav(frames = 2) {
@@ -21,6 +21,31 @@ function setup() {
     });
     return { bridge, workers, timers, progress };
 }
+test('core initialization instantiates supplied WASM through the generated loader callback', async () => {
+    const wasm = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]);
+    let received;
+    const core = await initializeCore(async options => {
+        assert.throws(() => options.locateFile('ffmpeg-core.wasm'), /unverified runtime/);
+        const exports = options.instantiateWasm({}, (instance, module) => {
+            assert.ok(instance instanceof WebAssembly.Instance);
+            assert.ok(module instanceof WebAssembly.Module);
+            received = instance;
+        });
+        assert.equal(exports, received.exports);
+        return received;
+    }, wasm);
+    assert.equal(core, received);
+});
+test('invalid WASM and loader callback errors reject initialization without hanging', async () => {
+    let called = false;
+    await assert.rejects(initializeCore(() => { called = true; }, new Uint8Array()), WebAssembly.CompileError);
+    assert.equal(called, false);
+    const wasm = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]);
+    await assert.rejects(initializeCore(options => new Promise(resolve => {
+        options.instantiateWasm({}, () => { throw new Error('Initialization failed'); });
+        resolve();
+    }), wasm), /Initialization failed/);
+});
 test('creating bridge and native-format rejection do not start or download a runtime', async () => {
     const { bridge, workers } = setup(); assert.equal(workers.length, 0);
     await assert.rejects(bridge.convert(1, 'native.wav', new Uint8Array([1])), /Choose WAV/);
