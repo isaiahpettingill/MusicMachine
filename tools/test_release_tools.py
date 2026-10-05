@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 import xml.etree.ElementTree as ET
+from test_windows_install_directory import WindowsInstallDirectoryTests
 
 TOOLS = Path(__file__).resolve().parent
 

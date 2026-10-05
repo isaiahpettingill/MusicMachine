@@ -211,7 +211,8 @@ function Invoke-MusicMachineInstall {
         }
         # Recheck immediately before launching; there is no elevation verb or bypass.
         Assert-MusicMachineUserContext
-        Write-Host 'Official release checksum verified. The Windows setup is not Authenticode-signed.'
+        if ($Silent) { Write-Host 'Download verified. Installing MusicMachine...' }
+        else { Write-Host 'Download verified. Opening MusicMachine setup...' }
         $arguments = if ($Silent) { '/S' } else { '' }
         if ($InstallDirectory) {
             # NSIS requires /D= to be the final, unquoted command-line argument.
@@ -220,11 +221,21 @@ function Invoke-MusicMachineInstall {
         $start = @{ FilePath = $installer; Wait = $true; PassThru = $true }
         if ($arguments) { $start.ArgumentList = $arguments }
         $process = Start-Process @start
-        if ($process.ExitCode -ne 0) { throw "MusicMachine setup exited with code $($process.ExitCode)." }
+        if ($process.ExitCode -eq 1) { throw 'Setup was canceled. Run the script again when you are ready to install.' }
+        if ($process.ExitCode -eq 2) { throw 'Setup could not finish. Follow the message in the setup window, then try again.' }
+        if ($process.ExitCode -ne 0) { throw "Setup could not finish (exit code $($process.ExitCode)). Try running the Windows setup again." }
         Write-Host "MusicMachine $releaseVersion setup finished."
     } finally {
         if (Test-Path -LiteralPath $downloadDirectory) { Remove-Item -LiteralPath $downloadDirectory -Recurse -Force }
     }
 }
 
-Invoke-MusicMachineInstall @PSBoundParameters
+try {
+    Invoke-MusicMachineInstall @PSBoundParameters
+} catch {
+    # Keep the normal console useful: PowerShell's default error renderer adds
+    # source lines, carets and type names to even a simple canceled installation.
+    # The base exception preserves the actual failure without that stack dump.
+    Write-Host ('MusicMachine setup stopped: ' + $_.Exception.GetBaseException().Message) -ForegroundColor Red
+    exit 1
+}

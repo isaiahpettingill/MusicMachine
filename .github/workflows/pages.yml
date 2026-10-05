@@ -33,7 +33,7 @@ jobs:
     runs-on: ubuntu-24.04
     environment:
       name: cloudflare-pages
-      url: https://music-machine.pages.dev
+      url: https://music-machine-synth.pages.dev
     steps:
       - uses: actions/checkout@v4
         with:
@@ -106,9 +106,9 @@ jobs:
           BUILD_SHA: ${{ steps.build.outputs.sha }}
         run: |
           node tools/ensure-pages-project.mjs
-          pnpm exec wrangler pages deploy --project-name music-machine --branch main --commit-hash "$BUILD_SHA" --commit-dirty=true
+          pnpm exec wrangler pages deploy --project-name music-machine-synth --branch main --commit-hash "$BUILD_SHA" --commit-dirty=true
       - name: Verify live production app, downloads page, favicon and commit
         if: steps.build.outputs.deploy == 'true'
         env:
           BUILD_SHA: ${{ steps.build.outputs.sha }}
-        run: node tools/verify-deployment.mjs https://music-machine.pages.dev "$BUILD_SHA"
+        run: node tools/verify-deployment.mjs https://music-machine-synth.pages.dev "$BUILD_SHA"

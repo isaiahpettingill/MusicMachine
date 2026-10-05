@@ -187,7 +187,9 @@ foreach ($size in @(0, -1, 536870913, 1.5, '25')) {
 New-Fixture; $fixture.Manifest.assets += $fixture.Manifest.assets[0]; Invoke-Fixture @{} 'exactly one Windows setup'
 New-Fixture; $fixture.Manifest.assets = @(); Invoke-Fixture @{} 'exactly one Windows setup'
 New-Fixture; Invoke-Fixture @{ Version = '1.2.4' } 'does not match'
-New-Fixture; $fixture.ExitCode = 1223; Invoke-Fixture @{} 'exited with code 1223'
+New-Fixture; $fixture.ExitCode = 1; Invoke-Fixture @{} 'Setup was canceled.*Run the script again'
+New-Fixture; $fixture.ExitCode = 2; Invoke-Fixture @{} 'Setup could not finish.*setup window'
+New-Fixture; $fixture.ExitCode = 1223; Invoke-Fixture @{} 'exit code 1223'
 New-Fixture; $fixture.LaunchError = $true; Invoke-Fixture @{} 'Simulated launch failure'
 New-Fixture; $fixture.Transport.NetworkError = $true; Invoke-Fixture @{} 'Simulated network failure'
 New-Fixture; [void](Add-Response ([byte[]]::new(1048577))); Invoke-Fixture @{} 'byte limit'
@@ -198,6 +200,46 @@ foreach ($invalidJson in @('{broken', '{"schema":')) {
     Assert-True ($fixture.Transport.Requested.Count -eq 1) 'Malformed metadata fetched the setup payload'
 }
 New-Fixture; [void](Add-Response ([byte[]]@(0xff))); Invoke-Fixture @{} 'translate|decode|Unable'
+
+# Do not hide unexpected pipeline output behind the usual test stream redirection.
+# The installer emits only its three short progress messages, never HTTP objects,
+# process objects, the manifest, or a misleading success message after a failure.
+New-Fixture; Add-Defaults
+$successOutput = @(Invoke-MusicMachineInstall -Confirm:$false 6> $null)
+Assert-True ($successOutput.Count -eq 0) 'Setup leaked objects to the success pipeline'
+$checks++
+New-Fixture; Add-Defaults
+$messages = @(Invoke-MusicMachineInstall -Confirm:$false 6>&1)
+Assert-True ($messages.Count -eq 3) 'Setup printed unexpected progress output'
+Assert-True ([string]$messages[0] -ceq 'Downloading MusicMachine 1.2.3...') 'Download progress was unclear'
+Assert-True ([string]$messages[1] -ceq 'Download verified. Opening MusicMachine setup...') 'Launch progress was unclear'
+Assert-True ([string]$messages[2] -ceq 'MusicMachine 1.2.3 setup finished.') 'Completion progress was unclear'
+$checks++
+New-Fixture; Add-Defaults; $fixture.ExitCode = 2
+$failedMessages = [Collections.Generic.List[object]]::new()
+Expect-Result {
+    Invoke-MusicMachineInstall -Confirm:$false 6>&1 | ForEach-Object { $failedMessages.Add($_) }
+} 'Setup could not finish'
+Assert-True (@($failedMessages | Where-Object { [string]$_ -match 'setup finished' }).Count -eq 0) 'A failed setup printed success'
+
+# Exercise the real script entry-point catch in a separate PowerShell process so
+# its exit cannot end these tests. Only the install action is a fixture: no HTTP,
+# Windows token, real installer or policy change is used in these output checks.
+$entryPoint = $ast.EndBlock.Statements[-1].Extent.Text
+$hostPath = [Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+$fixtureSource = @'
+$ErrorActionPreference = 'Stop'
+function Invoke-MusicMachineInstall {
+    throw [InvalidOperationException]::new('Unhelpful outer exception', [IO.IOException]::new('The installer could not write to the selected folder. Choose another folder.'))
+}
+'@ + "`n" + $entryPoint
+# Use -Command rather than creating an unsigned script file in the user's temp
+# directory; neither the production script nor these tests change execution policy.
+$consoleOutput = @(& $hostPath -NoLogo -NoProfile -Command $fixtureSource 2>&1)
+Assert-True ($LASTEXITCODE -eq 1) 'Bootstrap failure did not return a failing exit code'
+Assert-True ($consoleOutput.Count -eq 1) 'Bootstrap failure printed a PowerShell stack dump'
+Assert-True ([string]$consoleOutput[0] -ceq 'MusicMachine setup stopped: The installer could not write to the selected folder. Choose another folder.') 'Bootstrap did not show the concise actual error'
+$checks++
 
 # Transport matrix: absolute/relative redirects, host and scheme restrictions,
 # lying/omitted lengths, cancellation, bounded reads, timeouts and disposal.

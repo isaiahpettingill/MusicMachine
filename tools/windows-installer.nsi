@@ -68,9 +68,12 @@ Var StageOnly
 Var RegisterOnly
 
 Var CheckedEntries
+Var InstallDirectoryIssue
+Var InstallRoot
 
 Function RefuseInstallDirectory
-  MessageBox MB_OK|MB_ICONSTOP "Choose a new or empty folder, or an existing MusicMachine installation. Source checkouts, unrelated files and linked folders will not be overwritten." /SD IDOK
+  DetailPrint "Cannot install to $INSTDIR: $InstallDirectoryIssue"
+  MessageBox MB_OK|MB_ICONSTOP "MusicMachine could not use this installation folder:$\r$\n$INSTDIR$\r$\n$\r$\n$InstallDirectoryIssue$\r$\n$\r$\nChoose a new or empty folder, or an existing MusicMachine installation. No files have been replaced." /SD IDOK
   SetErrorLevel 2
   Abort
 FunctionEnd
@@ -91,6 +94,7 @@ Function CheckInstallTree
   System::Alloc 592
   Pop $3
   ${If} $3 == 0
+    StrCpy $InstallDirectoryIssue "Not enough memory to check the folder. Close other apps and try again."
     Goto tree_refused
   ${EndIf}
   System::Call 'kernel32::FindFirstFileW(w "$0\*", p r3) p .r1 ?e'
@@ -99,6 +103,7 @@ Function CheckInstallTree
     ${If} $4 == 2
       Goto tree_cleanup
     ${EndIf}
+    StrCpy $InstallDirectoryIssue "Windows could not read $0 (error $4). Choose a folder you can access."
     Goto tree_refused
   ${EndIf}
   tree_next:
@@ -108,11 +113,13 @@ Function CheckInstallTree
     ${AndIf} $2 != ".."
       IntOp $CheckedEntries $CheckedEntries + 1
       ${If} $CheckedEntries > 20000
+        StrCpy $InstallDirectoryIssue "This folder has too many files to check safely. Choose a new or empty folder."
         Goto tree_refused
       ${EndIf}
       System::Call '*$3(i .r4)'
       IntOp $5 $4 & 0x400
       ${If} $5 != 0
+        StrCpy $InstallDirectoryIssue "The folder contains a linked file or folder: $0\$2. Choose a folder without links."
         Goto tree_refused
       ${EndIf}
       IntOp $4 $4 & 0x10
@@ -132,6 +139,7 @@ Function CheckInstallTree
     ${If} $5 == 18
       Goto tree_cleanup
     ${EndIf}
+    StrCpy $InstallDirectoryIssue "Windows could not finish reading $0 (error $5). Choose a folder you can access."
   tree_refused:
     StrCpy $6 1
   tree_cleanup:
@@ -155,11 +163,31 @@ Function CheckInstallTree
 FunctionEnd
 
 Function CheckInstallDirectory
-  GetFullPathName $INSTDIR "$INSTDIR"
+  StrCpy $InstallDirectoryIssue "The folder path is empty or invalid. Choose an installation folder."
   ${If} $INSTDIR == ""
     Call RefuseInstallDirectory
   ${EndIf}
-  ; A reparse point in any ancestor could redirect writes outside this folder.
+  ; NSIS GetFullPathName can clear its output for a path that does not exist.
+  ; The Win32 API only normalizes the path, so first installs remain valid.
+  ; Do not create the directory until all existing ancestors have been checked.
+  System::Call 'kernel32::GetFullPathNameW(w "$INSTDIR", i ${NSIS_MAX_STRLEN}, w .r0, p 0) i .r1 ?e'
+  Pop $2
+  ${If} $1 == 0
+    StrCpy $InstallDirectoryIssue "Windows could not resolve this folder path (error $2). Choose another folder."
+    Call RefuseInstallDirectory
+  ${EndIf}
+  ${If} $1 >= ${NSIS_MAX_STRLEN}
+    StrCpy $InstallDirectoryIssue "The folder path is too long. Choose a shorter path."
+    Call RefuseInstallDirectory
+  ${EndIf}
+  StrCpy $INSTDIR "$0"
+  ${GetRoot} "$INSTDIR" $InstallRoot
+  ${If} $InstallRoot == ""
+    Call RefuseInstallDirectory
+  ${EndIf}
+  ; GetParent strips the final slash from a drive root. C: is drive-relative,
+  ; not C:\, so never query it or continue beyond the actual root.
+  StrCpy $InstallRoot "$InstallRoot\"
   StrCpy $0 "$INSTDIR"
   check_parent:
     System::Call 'kernel32::GetFileAttributesW(w r0) i .r1 ?e'
@@ -167,22 +195,37 @@ Function CheckInstallDirectory
     ${If} $1 == -1
       ${If} $2 != 2
       ${AndIf} $2 != 3
+        StrCpy $InstallDirectoryIssue "Windows could not check $0 (error $2). Choose a folder you can access."
         Call RefuseInstallDirectory
       ${EndIf}
     ${Else}
       IntOp $2 $1 & 0x400
       IntOp $1 $1 & 0x10
       ${If} $2 != 0
-      ${OrIf} $1 == 0
+        StrCpy $InstallDirectoryIssue "This path uses a linked folder: $0. Choose a folder without links."
+        Call RefuseInstallDirectory
+      ${EndIf}
+      ${If} $1 == 0
+        StrCpy $InstallDirectoryIssue "A file is blocking this folder path: $0. Choose another folder."
         Call RefuseInstallDirectory
       ${EndIf}
     ${EndIf}
-    ${GetParent} "$0" $1
-    ${If} $1 != ""
-    ${AndIf} $1 != $0
-      StrCpy $0 "$1"
-      Goto check_parent
+    ${If} $0 == $InstallRoot
+      Goto checked_parents
     ${EndIf}
+    ${GetParent} "$0" $1
+    ${If} "$1\" == $InstallRoot
+      StrCpy $1 "$InstallRoot"
+    ${EndIf}
+    ${If} $1 == ""
+    ${OrIf} $1 == $0
+      StrCpy $InstallDirectoryIssue "Windows could not find the root of this folder path. Choose another folder."
+      Call RefuseInstallDirectory
+    ${EndIf}
+    StrCpy $0 "$1"
+    Goto check_parent
+  checked_parents:
+  StrCpy $InstallDirectoryIssue "This folder contains source-code files. Choose a separate installation folder."
   ; These markers must never be accepted even if a stale registry entry exists.
   System::Call 'kernel32::GetFileAttributesW(w "$INSTDIR\.git") i .r0'
   ${If} $0 != -1
@@ -198,6 +241,7 @@ Function CheckInstallDirectory
     ${OrIf} $1 == 3
       Return
     ${EndIf}
+    StrCpy $InstallDirectoryIssue "Windows could not check this folder (error $1). Choose a folder you can access."
     Goto refuse_directory
   ${EndIf}
   StrCpy $CheckedEntries 0
@@ -209,6 +253,7 @@ Function CheckInstallDirectory
   ${If} $CheckedEntries == 0
     Return
   ${EndIf}
+  StrCpy $InstallDirectoryIssue "This folder contains files but is not a recognized MusicMachine installation. Choose a new or empty folder; your existing files will be kept."
   ${IfNot} ${FileExists} "$INSTDIR\MusicMachine.Desktop.exe"
     Goto refuse_directory
   ${EndIf}

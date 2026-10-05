@@ -79,15 +79,15 @@ test('missing Pages secrets skip deployment without exposing values', async t =>
 });
 
 
-test('deployment configuration uses the requested music-machine Pages project', async () => {
+test('deployment configuration uses the requested music-machine-synth Pages project', async () => {
   const config = JSON.parse(await readFile(new URL('../wrangler.jsonc', import.meta.url), 'utf8'));
-  assert.equal(config.name, 'music-machine');
+  assert.equal(config.name, 'music-machine-synth');
   const workflow = await readFile(new URL('../.github/workflows/pages.yml', import.meta.url), 'utf8');
-  assert.match(workflow, /--project-name music-machine /);
-  assert.match(workflow, /https:\/\/music-machine\.pages\.dev/);
+  assert.match(workflow, /--project-name music-machine-synth /);
+  assert.match(workflow, /https:\/\/music-machine-synth\.pages\.dev/);
   assert.doesNotMatch(workflow, /https:\/\/musicmachine\.pages\.dev/);
   const ensure = await readFile(new URL('./ensure-pages-project.mjs', import.meta.url), 'utf8');
-  assert.match(ensure, /name: 'music-machine'/);
+  assert.match(ensure, /name: 'music-machine-synth'/);
 });
 
 test('Pages requires its own successful trusted browser job, independent of native release status', async () => {
