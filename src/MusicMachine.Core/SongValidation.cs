@@ -27,7 +27,7 @@ internal static class SongValidation
     public static void Validate(Song song)
     {
         ArgumentNullException.ThrowIfNull(song);
-        Require(song.Version == 1, $"Unsupported song version {song.Version}");
+        Require(song.Version is 1 or 2, $"Unsupported song version {song.Version}");
         Text(song.Title, 256, "Song title"); Text(song.Author, 256, "Author");
         Range(song.Bpm, 20, 400, "Tempo"); Range(song.RowsPerBeat, 1, 16, "Rows per beat");
         Require((song.RowsPerBeat & (song.RowsPerBeat - 1)) == 0, "Rows per beat must be 1, 2, 4, 8 or 16");
@@ -110,6 +110,10 @@ internal static class SongValidation
         Range((int)instrument.Waveform, 0, 7, "Waveform"); Range((int)instrument.Drum, 0, 6, "Drum kind");
         Range(instrument.PulseWidth, .01, .99, "Pulse width"); Range(instrument.DetuneCents, -1200, 1200, "Detune"); Range(instrument.Phase, 0, 1, "Phase");
         Range(instrument.VolumeDb, -96, 12, "Instrument volume");
+        Range(instrument.OscillatorAmplitude, 0, 1, "Oscillator amplitude");
+        Range(instrument.TrianglePeak, .01, .99, "Triangle peak position");
+        Range(instrument.SquareWidth, .01, .99, "Square width");
+        Range(instrument.WaveHigh, -1, 1, "Wave high level"); Range(instrument.WaveLow, -1, 1, "Wave low level");
         Require(instrument.Amplitude is not null, "Missing amplitude envelope");
         Range(instrument.Amplitude!.AttackMs, 0, 60000, "Attack"); Range(instrument.Amplitude.DecayMs, 0, 60000, "Decay");
         Range(instrument.Amplitude.Sustain, 0, 1, "Sustain"); Range(instrument.Amplitude.ReleaseMs, 0, 60000, "Release");

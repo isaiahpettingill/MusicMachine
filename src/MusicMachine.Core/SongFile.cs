@@ -11,7 +11,7 @@ public static class SongFile
         Validate(song);
         var w = new CborWriter(CborConformanceMode.Strict);
         w.WriteStartMap(19);
-        CborCodec.K(w, 0); w.WriteTextString("MusicMachine.song"); CborCodec.K(w, 1); w.WriteInt32(song.Version);
+        CborCodec.K(w, 0); w.WriteTextString("MusicMachine.song"); CborCodec.K(w, 1); w.WriteInt32(Math.Max(song.Version, song.Instruments.Any(CborCodec.RequiresShapeVersion) ? 2 : 1));
         CborCodec.K(w, 2); w.WriteTextString(song.Title); CborCodec.K(w, 3); w.WriteTextString(song.Author);
         CborCodec.K(w, 4); w.WriteDouble(song.Bpm); CborCodec.K(w, 5); w.WriteInt32(song.RowsPerBeat);
         CborCodec.K(w, 6); w.WriteInt32(song.BeatsPerBar); CborCodec.K(w, 7); w.WriteDouble(song.Swing);
@@ -59,7 +59,7 @@ public static class SongFile
             }
         });
         SongValidation.Require(magic == "MusicMachine.song", "This is not a MusicMachine song");
-        SongValidation.Require(version == 1, $"Unsupported song version {version}");
+        SongValidation.Require(version is 1 or 2, $"Unsupported song version {version}");
         SongValidation.Require(required == 15, "Song is missing required instrument, track, pattern or arrangement data");
         Validate(song);
         return song;
@@ -81,7 +81,7 @@ public static class InstrumentFile
         Validate(instrument);
         var w = new CborWriter(CborConformanceMode.Strict);
         w.WriteStartMap(3); CborCodec.K(w, 0); w.WriteTextString("MusicMachine.instrument");
-        CborCodec.K(w, 1); w.WriteInt32(1); CborCodec.K(w, 2); CborCodec.WriteInstrument(w, instrument); w.WriteEndMap();
+        CborCodec.K(w, 1); w.WriteInt32(CborCodec.RequiresShapeVersion(instrument) ? 2 : 1); CborCodec.K(w, 2); CborCodec.WriteInstrument(w, instrument); w.WriteEndMap();
         return CborCodec.Finish(w);
     }
     public static Instrument Read(byte[] data) => CborCodec.Decode(data, r =>
@@ -89,7 +89,7 @@ public static class InstrumentFile
         string magic = ""; var version = -1; Instrument? instrument = null;
         CborCodec.Map(r, key => { switch (key) { case 0: magic = CborCodec.Text(r, 64); break; case 1: version = r.ReadInt32(); break; case 2: instrument = CborCodec.ReadInstrument(r); break; default: CborCodec.Skip(r); break; } });
         SongValidation.Require(magic == "MusicMachine.instrument", "This is not a MusicMachine instrument");
-        SongValidation.Require(version == 1, $"Unsupported instrument version {version}");
+        SongValidation.Require(version is 1 or 2, $"Unsupported instrument version {version}");
         SongValidation.Require(instrument is not null, "Missing instrument data"); Validate(instrument!); return instrument!;
     });
     public static void Validate(Instrument instrument) => SongValidation.Validate(instrument);
@@ -215,15 +215,24 @@ internal static class CborCodec
         else if (r.PeekState() == CborReaderState.Tag) { r.ReadTag(); Skip(r, depth + 1, ref budget); }
         else { SongValidation.Require(r.PeekState() != CborReaderState.StartIndefiniteLengthByteString && r.PeekState() != CborReaderState.StartIndefiniteLengthTextString, "Indefinite CBOR strings are unsupported"); r.SkipValue(); }
     }
+    internal static bool RequiresShapeVersion(Instrument i) => i.OscillatorAmplitude != 1 || i.TrianglePeak != .5 ||
+        i.SquareWidth != .5 || i.WaveHigh != 1 || i.WaveLow != -1;
     internal static void WriteInstrument(CborWriter w, Instrument i)
     {
-        w.WriteStartMap(19);
+        var shaped = RequiresShapeVersion(i);
+        w.WriteStartMap(shaped ? 24 : 19);
         K(w, 0); w.WriteTextString(i.Id); K(w, 1); w.WriteTextString(i.Name); K(w, 2); w.WriteInt32((int)i.Waveform); K(w, 3); w.WriteInt32((int)i.Drum);
         K(w, 4); w.WriteDouble(i.PulseWidth); K(w, 5); w.WriteDouble(i.DetuneCents); K(w, 6); w.WriteDouble(i.Phase); K(w, 7); w.WriteDouble(i.VolumeDb);
         K(w, 8); WriteEnvelope(w, i.Amplitude); K(w, 9); w.WriteDouble(i.PitchEnvelopeSemitones); K(w, 10); w.WriteDouble(i.PitchEnvelopeMs);
         K(w, 11); w.WriteDouble(i.FilterCutoff); K(w, 12); w.WriteDouble(i.FilterResonance); K(w, 13); WriteWave(w, i.CustomWave);
         K(w, 14); Array(w, i.Wavetable, WriteWave); K(w, 15); w.WriteDouble(i.WavetablePosition); K(w, 16); w.WriteBoolean(i.IsLocal);
-        K(w, 17); w.WriteInt32(1); K(w, 18); w.WriteTextString("pcm16le"); w.WriteEndMap();
+        K(w, 17); w.WriteInt32(shaped ? 2 : 1); K(w, 18); w.WriteTextString("pcm16le");
+        if (shaped)
+        {
+            K(w, 19); w.WriteDouble(i.OscillatorAmplitude); K(w, 20); w.WriteDouble(i.TrianglePeak);
+            K(w, 21); w.WriteDouble(i.SquareWidth); K(w, 22); w.WriteDouble(i.WaveHigh); K(w, 23); w.WriteDouble(i.WaveLow);
+        }
+        w.WriteEndMap();
     }
     internal static Instrument ReadInstrument(CborReader r)
     {
@@ -235,9 +244,12 @@ internal static class CborCodec
             case 8: i.Amplitude = ReadEnvelope(r); break; case 9: i.PitchEnvelopeSemitones = r.ReadDouble(); break; case 10: i.PitchEnvelopeMs = r.ReadDouble(); break;
             case 11: i.FilterCutoff = r.ReadDouble(); break; case 12: i.FilterResonance = r.ReadDouble(); break; case 13: i.CustomWave = ReadWave(r); break;
             case 14: i.Wavetable = Array(r, SongLimits.MaxWaveFrames, ReadWave); break; case 15: i.WavetablePosition = r.ReadDouble(); break; case 16: i.IsLocal = r.ReadBoolean(); break;
-            case 17: version = r.ReadInt32(); break; case 18: SongValidation.Require(Text(r, 32) == "pcm16le", "Unsupported waveform sample encoding"); break; default: Skip(r); break;
+            case 17: version = r.ReadInt32(); break; case 18: SongValidation.Require(Text(r, 32) == "pcm16le", "Unsupported waveform sample encoding"); break;
+            case 19: i.OscillatorAmplitude = r.ReadDouble(); break; case 20: i.TrianglePeak = r.ReadDouble(); break;
+            case 21: i.SquareWidth = r.ReadDouble(); break; case 22: i.WaveHigh = r.ReadDouble(); break; case 23: i.WaveLow = r.ReadDouble(); break;
+            default: Skip(r); break;
         } });
-        SongValidation.Require(version == 1, "Unsupported embedded instrument version"); SongValidation.Validate(i); return i;
+        SongValidation.Require(version is 1 or 2, "Unsupported embedded instrument version"); SongValidation.Validate(i); return i;
     }
     private static void WriteWave(CborWriter w, short[] wave)
     {

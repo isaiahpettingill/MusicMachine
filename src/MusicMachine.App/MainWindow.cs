@@ -1,6 +1,7 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
@@ -81,6 +82,25 @@ public sealed partial class MainView : UserControl
         cellEntry.KeyDown += (_, e) => { if (e.Key == Key.Enter) { if (tracker.CommitText(cellEntry.Text ?? "")) { tracker.Select(tracker.SelectedRow + 1, tracker.SelectedTrack, tracker.SelectedColumn); UpdateSelection(); tracker.Focus(); } e.Handled = true; } };
         OverlayRoot.Children.Add(BuildShell()); Content = OverlayRoot;
         KeyDown += GlobalKeyDown;
+        // A number can commit on blur during another control's pointer press. Wait
+        // until that click/drag completes before replacing any snapshot-built UI.
+        AddHandler(PointerPressedEvent, (_, _) => { pointerGesture++; pointerInteraction = true; }, RoutingStrategies.Tunnel, true);
+        AddHandler(PointerReleasedEvent, (_, _) => CompletePointerRefresh(), RoutingStrategies.Bubble, true);
+        AddHandler(PointerCaptureLostEvent, (_, e) =>
+        {
+            var gesture = pointerGesture;
+            Dispatcher.UIThread.Post(() => { if (gesture == pointerGesture && e.Pointer.Captured is null) CompletePointerRefresh(); }, DispatcherPriority.Background);
+        }, RoutingStrategies.Bubble, true);
+        PointerExited += (_, e) => { if (e.Pointer.Captured is null) CompletePointerRefresh(); };
+        AttachedToVisualTree += (_, _) =>
+        {
+            if (TopLevel.GetTopLevel(this) is Window window) { pointerWindow = window; window.Deactivated += PointerWindowDeactivated; }
+        };
+        DetachedFromVisualTree += (_, _) =>
+        {
+            pointerGesture++; pointerInteraction = pointerRefreshPending = false;
+            if (pointerWindow is { } window) { window.Deactivated -= PointerWindowDeactivated; pointerWindow = null; }
+        };
         DetachedFromVisualTree += (_, _) => { timer.Stop(); recoveryTimer.Stop(); StopUpdates(); samplingPanel.CancelWork(); player.Dispose(); };
         timer.Tick += (_, _) => TickPlayback(); timer.Start();
         recoveryTimer.Tick += async (_, _) => await SaveRecoverySnapshotAsync();
@@ -94,6 +114,10 @@ public sealed partial class MainView : UserControl
     }
     private void Refresh(bool preserveTracker = false)
     {
+        if (refreshing) return;
+        if (pointerInteraction) { pointerRefreshPending = true; return; }
+        pointerRefreshPending = false;
+        var fieldFocus = CaptureEditorFocus();
         refreshing = true;
         try
         {
@@ -102,7 +126,7 @@ public sealed partial class MainView : UserControl
             if (song.FindInstrument(selectedInstrument) is null) selectedInstrument = song.Instruments.FirstOrDefault()?.Id ?? "";
             chosenTrack = Math.Clamp(chosenTrack, 0, Math.Max(0, song.Tracks.Count - 1));
             Title = $"{(editor.IsDirty ? "● " : "")}{song.Title} · MusicMachine"; titleBox.Text = song.Title;
-            tempo.Value = (decimal)song.Bpm; beats.Value = song.BeatsPerBar; beatUnit.SelectedIndex = (int)Math.Log2(song.BeatUnit) - 1; swing.Value = (decimal)(song.Swing * 100); gridResolution.SelectedIndex = (int)Math.Log2(song.RowsPerBeat); rows.Value = song.FindPattern(activePattern)!.Length;
+            ((EditorNumber)tempo).SetModelValue((decimal)song.Bpm); ((EditorNumber)beats).SetModelValue(song.BeatsPerBar); beatUnit.SelectedIndex = (int)Math.Log2(song.BeatUnit) - 1; ((EditorNumber)swing).SetModelValue((decimal)(song.Swing * 100)); gridResolution.SelectedIndex = (int)Math.Log2(song.RowsPerBeat); ((EditorNumber)rows).SetModelValue(song.FindPattern(activePattern)!.Length);
             undoButton.IsEnabled = editor.CanUndo; redoButton.IsEnabled = editor.CanRedo;
             library.Children.Clear(); foreach (var instrument in song.Instruments)
             {
@@ -115,15 +139,25 @@ public sealed partial class MainView : UserControl
                 if (pattern.Id == activePattern) button.Classes.Add("selected"); row.Children.Add(button); var count = Ui.Label($"{pattern.Length}", 10, Ui.Muted); count.Margin = new(4); Grid.SetColumn(count, 1); row.Children.Add(count); patternList.Children.Add(row);
             }
             RefreshChrome(); samplingPanel.SetTarget(song.FindInstrument(selectedInstrument)?.Name ?? "selected instrument");
-            tracker.SetSong(song, activePattern); instrumentPanel.ShowInstrument(song, selectedInstrument); if (!(preserveTracker && mode == "Tracker")) RefreshWorkspace(); UpdateSelection();
+            tracker.SetSong(song, activePattern); instrumentPanel.ShowInstrument(song, selectedInstrument); RefreshWorkspace(); UpdateSelection();
         }
         finally { refreshing = false; }
+        RestoreEditorFocus(fieldFocus);
     }
     private void RefreshWorkspace()
     {
         foreach (var (name, button) in tabButtons) { if (name == mode) button.Classes.Add("selected"); else button.Classes.Remove("selected"); }
+        var changedWorkspace = displayedMode != mode;
+        // These editors own persistent controls and update from the model in place.
+        // Rebuilding their scroll/presenter wrappers on every keystroke loses focus
+        // and can attach one visual to two presenters before the next layout pass.
+        if (!changedWorkspace && workArea.Content is not null && mode is "Tracker" or "Instrument" or "Sampling")
+        {
+            PrepareInspector(); UpdateTrackerCommands(); return;
+        }
         if (WorkspaceScroll(workArea.Content) is { } previous) workspaceOffsets[displayedMode] = previous.Offset;
         workArea.Content = null;
+        workArea.Presenter?.UpdateChild();
         PrepareInspector();
         var content = mode switch { "Arrangement" => BuildArrangement(), "Drums" => BuildDrums(), "Instrument" => BuildInstrumentWorkspace(), "Automation" => BuildAutomationWorkspace(), "Sampling" => BuildSamplingWorkspace(), _ => BuildTracker() };
         displayedMode = mode; workArea.Content = content;
@@ -133,7 +167,7 @@ public sealed partial class MainView : UserControl
             scroll.Loaded += (_, _) => scroll.Offset = restore;
             scroll.ScrollChanged += (_, _) => workspaceOffsets[modeKey] = scroll.Offset;
         }
-        RestoreInputFocus();
+        if (changedWorkspace) RestoreInputFocus();
     }
     private static ScrollViewer? WorkspaceScroll(object? control) => control as ScrollViewer ?? (control as Grid)?.Children.OfType<ScrollViewer>().FirstOrDefault();
     private void UpdateSelection()
@@ -145,7 +179,8 @@ public sealed partial class MainView : UserControl
     }
     private void Change(Action<Song> action)
     {
-        if (refreshing || !tracker.CommitPending()) return;
+        if (refreshing) return;
+        if (!tracker.CommitPending()) { Refresh(); return; }
         try { var keepFocus = tracker.IsFocused; Stop(); editor.Change(action); Refresh(keepFocus); recoveryTimer.Stop(); recoveryTimer.Start(); }
         catch (Exception e) { Refresh(); SetStatus(e.Message); }
     }
@@ -174,7 +209,7 @@ public sealed partial class MainView : UserControl
     private void Stop() { player.Stop(); SetPlayingVisual(false); tracker.PlaybackRow = -1; tracker.InvalidateVisual(); transportPosition.Text = "00:00.0"; previewing = false; playingPattern = null; }
     private void TickPlayback()
     {
-        if (!player.IsPlaying) { if (playingVisual) { var error = player.LastError; Stop(); if (!string.IsNullOrEmpty(error)) SetStatus(error); } return; }
+        if (!player.IsPlaying) { if (playingVisual) { var error = player.LastError; Stop(); if (!string.IsNullOrEmpty(error)) SetStatus(error); else SetStatus("Playback finished"); } return; }
         var seconds = player.PositionFrames / (double)Math.Max(1, player.SampleRate); transportPosition.Text = $"{(int)seconds / 60:00}:{seconds % 60:00.0}";
         if (previewing) return;
         if (playingPattern is not null) { tracker.PlaybackRow = playingPattern == activePattern ? (int)(seconds * editor.Song.Bpm / 60 * editor.Song.RowsPerBeat) % editor.Song.FindPattern(playingPattern)!.Length : -1; tracker.InvalidateVisual(); return; }
@@ -227,7 +262,15 @@ public sealed partial class MainView : UserControl
     }
     private void AddInstrument() { var ins = new Instrument { Name = "New pulse", VolumeDb = -14 }; Change(s => s.Instruments.Add(ins)); selectedInstrument = ins.Id; Refresh(); }
     private void MakeLocal() { var originalId = selectedInstrument; var ins = InstrumentFile.Clone(editor.Song.FindInstrument(originalId)!); ins.Id = Guid.NewGuid().ToString("N"); ins.Name += " local"; ins.IsLocal = true; Change(s => { s.Instruments.Add(ins); if (s.Tracks.Count > 0) { var t = s.Tracks[chosenTrack]; t.InstrumentId = ins.Id; foreach (var p in s.Patterns) foreach (var n in p.GetTrack(t.Id).Rows) if (n.InstrumentId == originalId) n.InstrumentId = ins.Id; } }); selectedInstrument = ins.Id; Refresh(); SetStatus("Independent local copy assigned to this track and its matching sound sections"); }
-    private void AddTrack() { Change(s => { var t = new Track { Name = $"Track {s.Tracks.Count + 1:00}", InstrumentId = selectedInstrument }; s.Tracks.Add(t); foreach (var p in s.Patterns) p.GetTrack(t.Id); }); }
+    private void AddTrack()
+    {
+        if (!tracker.CommitPending()) return;
+        if (editor.Song.Tracks.Count >= SongLimits.MaxTracks) { SetStatus("This song already has the maximum number of tracks"); return; }
+        var row = tracker.SelectedRow; chosenTrack = editor.Song.Tracks.Count;
+        Change(s => { var t = new Track { Name = $"Track {s.Tracks.Count + 1:00}", InstrumentId = selectedInstrument }; s.Tracks.Add(t); foreach (var p in s.Patterns) p.GetTrack(t.Id); });
+        tracker.Select(row, chosenTrack); UpdateSelection(); RestoreInputFocus();
+        SetStatus("Track column added · type notes here; Add FX column shows more effects at the same time");
+    }
     private void SetInstrumentEvent() { if (editor.Song.Tracks.Count == 0 || editor.Song.FindInstrument(selectedInstrument) is null) return; var r = tracker.SelectedRow; var t = editor.Song.Tracks[tracker.SelectedTrack].Id; Change(s => s.FindPattern(activePattern)!.GetTrack(t).Rows[r].InstrumentId = selectedInstrument); SetStatus("Instrument section header inserted; time position unchanged"); }
     private void AddPattern() { var p = new Pattern { Name = $"Pattern {editor.Song.Patterns.Count + 1:00}", Length = 32 }; Change(s => { foreach (var t in s.Tracks) p.GetTrack(t.Id); s.Patterns.Add(p); }); activePattern = p.Id; Refresh(); }
     private void DuplicatePattern() { var copy = SongFile.Clone(editor.Song).FindPattern(activePattern)!; copy.Id = Guid.NewGuid().ToString("N"); copy.Name += " copy"; Change(s => s.Patterns.Add(copy)); activePattern = copy.Id; Refresh(); }    private async Task TrackOptions(int index)

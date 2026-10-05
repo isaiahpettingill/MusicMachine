@@ -21,6 +21,7 @@ public sealed class TrackerGrid : Control
     public int PlaybackRow { get; set; } = -1;
     public event Action<Action<Song>>? Change;
     public event Action<string>? Status;
+    public event Action? EditChanged;
     public event Action<int, int>? SelectionChanged;
     public event Action<int>? TrackHeaderClicked;
     public event Action<int>? TrackHeaderContextRequested;
@@ -31,11 +32,11 @@ public sealed class TrackerGrid : Control
     public TrackerGrid()
     {
         Focusable = true; ClipToBounds = true;
-        Avalonia.Automation.AutomationProperties.SetName(this, "Pattern editor. Type notes, use arrows to navigate, Enter to commit, Delete to clear.");
+        Avalonia.Automation.AutomationProperties.SetName(this, "Pattern editor. Type notes, use arrows to navigate, Enter to commit, Escape to cancel, F2 for FX help, Delete to clear.");
     }
     public void SetSong(Song value, string patternId)
     {
-        var changedPattern = pattern?.Id != patternId; song = value; pattern = song.FindPattern(patternId); if (changedPattern) edit = null;
+        var changedPattern = pattern?.Id != patternId; song = value; pattern = song.FindPattern(patternId); if (changedPattern) ClearEdit();
         row = Math.Clamp(row, 0, Math.Max(0, (pattern?.Length ?? 1) - 1));
         column = Math.Clamp(column, 0, Math.Max(0, song.Tracks.Count * (EffectColumns + 1) - 1));
         anchorRow = Math.Clamp(anchorRow, 0, Math.Max(0, (pattern?.Length ?? 1) - 1)); anchorColumn = Math.Clamp(anchorColumn, 0, Math.Max(0, song.Tracks.Count * (EffectColumns + 1) - 1));
@@ -47,14 +48,43 @@ public sealed class TrackerGrid : Control
     {
         row = Math.Clamp(r, 0, Math.Max(0, (pattern?.Length ?? 1) - 1));
         column = Math.Clamp(track * (EffectColumns + 1) + col, 0, Math.Max(0, song.Tracks.Count * (EffectColumns + 1) - 1));
-        anchorRow = row; anchorColumn = column; edit = null; SelectionChanged?.Invoke(row, SelectedTrack); InvalidateVisual();
+        anchorRow = row; anchorColumn = column; ClearEdit(); SelectionChanged?.Invoke(row, SelectedTrack); InvalidateVisual();
     }
     private double CellX(int col) => Gutter + col / (EffectColumns + 1) * TrackWidth + (col % (EffectColumns + 1) == 0 ? 0 : 72 + (col % (EffectColumns + 1) - 1) * 38);
     private NoteEvent? Current => pattern?.Tracks.FirstOrDefault(t => t.TrackId == song.Tracks.ElementAtOrDefault(SelectedTrack)?.Id)?.Rows.ElementAtOrDefault(row);
     public string CurrentText => SelectedColumn == 0 ? Current is null ? "" : NoteParser.Format(Current) : Current?.Effects.ElementAtOrDefault(SelectedColumn - 1) ?? "";
     public string EditText => edit ?? CurrentText;
     public bool HasPendingEdit => edit is not null;
+    public string? EditError { get; private set; }
     public bool CommitPending() => Commit();
+    public void CancelPendingEdit()
+    {
+        if (edit is null) return;
+        ClearEdit(); Status?.Invoke("Edit cancelled · original cell kept"); InvalidateVisual();
+    }
+    private void ClearEdit() { edit = null; EditError = null; ToolTip.SetTip(this, null); EditChanged?.Invoke(); }
+    private bool RejectEdit(string error, string attemptedText)
+    {
+        // A rejected reference/paste replacement must not mislabel the draft still shown.
+        if (edit is not null && string.Equals(edit.Trim(), attemptedText.Trim(), StringComparison.OrdinalIgnoreCase)) EditError = error;
+        Status?.Invoke($"{(SelectedColumn == 0 ? "Note" : "FX")} not saved · Esc cancels{(SelectedColumn > 0 ? " · F2 for FX help" : "")} · {error}");
+        EditChanged?.Invoke(); InvalidateVisual(); return false;
+    }
+    private void UpdateTypingStatus()
+    {
+        EditError = null; ToolTip.SetTip(this, null); EditChanged?.Invoke();
+        Status?.Invoke($"Typing {(SelectedColumn == 0 ? "note" : "FX")} {edit} · Enter saves · Esc cancels{(SelectedColumn > 0 ? " · F2 for help" : "")}");
+    }
+    private string? FinishForNavigation()
+    {
+        if (edit is null || Commit()) return null;
+        // Navigation is always an escape route. Only a rejected draft is discarded;
+        // valid edits are committed above and the original saved cell is never cleared.
+        var rejected = edit; var cell = SelectedColumn == 0 ? "note" : "FX";
+        ClearEdit();
+        var notice = $"Discarded invalid {cell} \u201c{rejected}\u201d · original cell kept{(cell == "FX" ? " · F2 for FX help" : "")}";
+        Status?.Invoke(notice); return notice;
+    }
     public bool CommitText(string text)
     {
         if (pattern is null || song.Tracks.Count == 0) return false;
@@ -64,40 +94,52 @@ public sealed class TrackerGrid : Control
             int octave = 4;
             var notes = pattern.Tracks.FirstOrDefault(t => t.TrackId == tid)?.Rows;
             for (int i = r - 1; i >= 0; i--) if (notes?.ElementAtOrDefault(i) is { Kind: NoteKind.Note } prev) { octave = prev.Pitch / 12 - 1; break; }
-            if (!NoteParser.TryParse(text, octave, out var note, out var error)) { Status?.Invoke(error); return false; }
-            edit = null; Change?.Invoke(s => { var dest = s.FindPattern(pid)!.GetTrack(tid).Rows[r]; dest.Kind = note.Kind; dest.Pitch = note.Pitch; dest.Timing = note.Timing; });
+            if (!NoteParser.TryParse(text, octave, out var note, out var error)) return RejectEdit(error, text);
+            ClearEdit(); Change?.Invoke(s => { var dest = s.FindPattern(pid)!.GetTrack(tid).Rows[r]; dest.Kind = note.Kind; dest.Pitch = note.Pitch; dest.Timing = note.Timing; });
         }
         else
         {
             var normalized = text.Trim().ToUpperInvariant();
-            if (!FxParser.TryParse(normalized, out _, out var error)) { Status?.Invoke(error); return false; }
+            if (!FxParser.TryParse(normalized, out _, out var error)) return RejectEdit(error, text);
             var existing = Current?.Effects.ToList() ?? [];
             while (existing.Count < cellColumn) existing.Add("");
             existing[cellColumn - 1] = normalized;
-            try { FxParser.Validate(existing); } catch (Exception e) { Status?.Invoke(e.Message); return false; }
-            edit = null; Change?.Invoke(s => s.FindPattern(pid)!.GetTrack(tid).Rows[r].Effects = existing);
+            try { FxParser.Validate(existing); } catch (Exception e) { return RejectEdit(e.Message, text); }
+            ClearEdit(); Change?.Invoke(s => s.FindPattern(pid)!.GetTrack(tid).Rows[r].Effects = existing);
         }
-        edit = null; Status?.Invoke($"Row {row + 1:00} · {song.Tracks[SelectedTrack].Name} · {(string.IsNullOrWhiteSpace(text) ? "cleared" : text.Trim().ToUpperInvariant())}"); InvalidateVisual(); return true;
+        Status?.Invoke($"Row {row + 1:00} · {song.Tracks[SelectedTrack].Name} · {(string.IsNullOrWhiteSpace(text) ? "cleared" : text.Trim().ToUpperInvariant())}"); InvalidateVisual(); return true;
     }
     private bool Commit() => edit is null || CommitText(edit);
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
-        base.OnPointerPressed(e); if (pattern is null || song.Tracks.Count == 0 || !Commit()) return;
+        base.OnPointerPressed(e); if (pattern is null || song.Tracks.Count == 0) return;
         var p = e.GetPosition(this); if (p.X < Gutter) return;
         var t = Math.Clamp((int)((p.X - Gutter) / TrackWidth), 0, song.Tracks.Count - 1);
-        if (p.Y < HeaderHeight) { TrackHeaderClicked?.Invoke(t); if (e.GetCurrentPoint(this).Properties.IsRightButtonPressed) TrackHeaderContextRequested?.Invoke(t); return; }
+        if (p.Y < HeaderHeight)
+        {
+            var notice = FinishForNavigation(); TrackHeaderClicked?.Invoke(t);
+            if (e.GetCurrentPoint(this).Properties.IsRightButtonPressed) TrackHeaderContextRequested?.Invoke(t);
+            if (notice is not null) Status?.Invoke(notice);
+            return;
+        }
         var inner = p.X - Gutter - t * TrackWidth;
         var c = inner < 72 ? 0 : Math.Min(EffectColumns, 1 + (int)((inner - 72) / 38));
+        var targetRow = Math.Clamp((int)((p.Y - HeaderHeight) / RowHeight), 0, pattern.Length - 1);
+        // Clicking the active draft returns keyboard focus without appending or erasing it.
+        if (edit is not null && targetRow == row && t == SelectedTrack && c == SelectedColumn)
+        { Focus(); e.Handled = true; return; }
+        var navigationNotice = FinishForNavigation();
         var ar = anchorRow; var ac = anchorColumn; Select((int)((p.Y - HeaderHeight) / RowHeight), t, c); if (e.KeyModifiers.HasFlag(KeyModifiers.Shift)) { anchorRow = ar; anchorColumn = ac; } Focus();
         if ((p.Y - HeaderHeight) % RowHeight < 11 && Current?.InstrumentId is { Length: > 0 } id) InstrumentHeaderClicked?.Invoke(id);
-        if (e.ClickCount == 2) { edit = CurrentText; Status?.Invoke("Editing · type a note or FX, Enter to commit, Esc to cancel"); }
+        if (e.ClickCount == 2) { edit = CurrentText; UpdateTypingStatus(); }
+        if (navigationNotice is not null) Status?.Invoke(navigationNotice);
         e.Handled = true;
     }
     protected override void OnTextInput(TextInputEventArgs e)
     {
         if (string.IsNullOrEmpty(e.Text) || e.Text.Any(char.IsControl)) return;
         edit = (edit ?? "") + e.Text; if (edit.Length > 20) edit = edit[..20];
-        Status?.Invoke($"Typing {edit} · Enter to commit, Esc to cancel"); InvalidateVisual(); e.Handled = true;
+        UpdateTypingStatus(); InvalidateVisual(); e.Handled = true;
     }
     protected override void OnKeyDown(KeyEventArgs e)
     {
@@ -110,20 +152,20 @@ public sealed class TrackerGrid : Control
         var ar = anchorRow; var ac = anchorColumn;
         switch (e.Key)
         {
-            case Key.Escape: edit = null; Status?.Invoke("Edit cancelled"); break;
-            case Key.Delete: edit = null; CommitText(""); break;
-            case Key.Back: if (edit is null) edit = ""; else if (edit.Length > 0) edit = edit[..^1]; break;
+            case Key.Escape: CancelPendingEdit(); break;
+            case Key.Delete: ClearEdit(); CommitText(""); break;
+            case Key.Back: if (edit is null) edit = ""; else if (edit.Length > 0) edit = edit[..^1]; UpdateTypingStatus(); break;
             case Key.Enter: if (Commit()) Move(1, 0); break;
-            case Key.Tab: if (Commit()) Move(0, (e.KeyModifiers.HasFlag(KeyModifiers.Shift) ? -1 : 1) * (EffectColumns + 1)); break;
-            case Key.Space: if (edit is null) return; edit += " "; break;
-            case Key.Up: if (Commit()) Move(-1, 0); break;
-            case Key.Down: if (Commit()) Move(1, 0); break;
-            case Key.Left: if (Commit()) Move(0, -1); break;
-            case Key.Right: if (Commit()) Move(0, 1); break;
-            case Key.Home: if (Commit()) Select(0, SelectedTrack, SelectedColumn); break;
-            case Key.End: if (Commit()) Select((pattern?.Length ?? 1) - 1, SelectedTrack, SelectedColumn); break;
-            case Key.PageDown: if (Commit()) Move(16, 0); break;
-            case Key.PageUp: if (Commit()) Move(-16, 0); break;
+            case Key.Tab: FinishForNavigation(); Move(0, (e.KeyModifiers.HasFlag(KeyModifiers.Shift) ? -1 : 1) * (EffectColumns + 1)); break;
+            case Key.Space: if (edit is null) return; edit += " "; UpdateTypingStatus(); break;
+            case Key.Up: FinishForNavigation(); Move(-1, 0); break;
+            case Key.Down: FinishForNavigation(); Move(1, 0); break;
+            case Key.Left: FinishForNavigation(); Move(0, -1); break;
+            case Key.Right: FinishForNavigation(); Move(0, 1); break;
+            case Key.Home: FinishForNavigation(); Select(0, SelectedTrack, SelectedColumn); break;
+            case Key.End: FinishForNavigation(); Select((pattern?.Length ?? 1) - 1, SelectedTrack, SelectedColumn); break;
+            case Key.PageDown: FinishForNavigation(); Move(16, 0); break;
+            case Key.PageUp: FinishForNavigation(); Move(-16, 0); break;
             default: return;
         }
         if (e.KeyModifiers.HasFlag(KeyModifiers.Shift)) { anchorRow = ar; anchorColumn = ac; } else { anchorRow = row; anchorColumn = column; }
@@ -133,7 +175,7 @@ public sealed class TrackerGrid : Control
     {
         row = Math.Clamp(row + r, 0, (pattern?.Length ?? 1) - 1);
         column = Math.Clamp(column + c, 0, Math.Max(0, song.Tracks.Count * (EffectColumns + 1) - 1));
-        edit = null; SelectionChanged?.Invoke(row, SelectedTrack); this.BringIntoView(new Rect(CellX(column), HeaderHeight + row * RowHeight, 90, RowHeight));
+        ClearEdit(); SelectionChanged?.Invoke(row, SelectedTrack); this.BringIntoView(new Rect(CellX(column), HeaderHeight + row * RowHeight, 90, RowHeight));
     }
     public Task CopySelectionAsync() => Copy();
     public Task PasteSelectionAsync() => Paste();
@@ -182,7 +224,7 @@ public sealed class TrackerGrid : Control
                     else { while (dest.Effects.Count < part) dest.Effects.Add(""); dest.Effects[part - 1] = cells[x].Trim().ToUpperInvariant(); }
                 }
             }
-            SongFile.Validate(copy); Change?.Invoke(s => s.Patterns = copy.Patterns); edit = null; Focus(); Avalonia.Threading.Dispatcher.UIThread.Post(() => Focus(), Avalonia.Threading.DispatcherPriority.Background); Status?.Invoke($"Pasted {lines.Length} rows · Ctrl+Z undoes the complete paste"); return true;
+            SongFile.Validate(copy); ClearEdit(); Change?.Invoke(s => s.Patterns = copy.Patterns); Focus(); Avalonia.Threading.Dispatcher.UIThread.Post(() => Focus(), Avalonia.Threading.DispatcherPriority.Background); Status?.Invoke($"Pasted {lines.Length} rows · Ctrl+Z undoes the complete paste"); return true;
         }
         catch (Exception e) { Status?.Invoke(e.Message); return false; }
     }
@@ -190,6 +232,13 @@ public sealed class TrackerGrid : Control
     {
         base.OnPointerMoved(e); var p = e.GetPosition(this); if (pattern is null || p.X < Gutter || p.Y < HeaderHeight) return;
         var t = (int)((p.X - Gutter) / TrackWidth); var r = (int)((p.Y - HeaderHeight) / RowHeight); if (t >= song.Tracks.Count || r >= pattern.Length) return;
+        var inner = p.X - Gutter - t * TrackWidth;
+        var c = inner < 72 ? 0 : Math.Min(EffectColumns, 1 + (int)((inner - 72) / 38));
+        if (r == row && t == SelectedTrack && c == SelectedColumn && EditError is not null)
+        {
+            ToolTip.SetTip(this, $"{EditError} · Correct the text and press Enter, or Esc to cancel{(c > 0 ? "; F2 opens FX help" : "")}");
+            return;
+        }
         var n = pattern.Tracks.FirstOrDefault(x => x.TrackId == song.Tracks[t].Id)?.Rows.ElementAtOrDefault(r); if (n is null) return;
         var timing = n.Timing switch { NoteTiming.TripletEighth => " · eighth-note triplet retriggers while held", NoteTiming.TripletSixteenth => " · sixteenth-note triplet retriggers while held", NoteTiming.Swing => " · delayed on odd rows by the song swing amount", _ => "" };
         var description = n.Kind switch { NoteKind.Empty => "Sustain the previous note", NoteKind.Off => "Release the envelope", NoteKind.Cut => "Silence immediately", _ => NoteParser.Format(n) + timing };
@@ -225,10 +274,11 @@ public sealed class TrackerGrid : Control
                 for (int c = 0; c <= EffectColumns; c++)
                 {
                     var col = t * (EffectColumns + 1) + c; var cx = CellX(col); var selected = r >= Math.Min(row, anchorRow) && r <= Math.Max(row, anchorRow) && col >= Math.Min(column, anchorColumn) && col <= Math.Max(column, anchorColumn);
-                    if (selected) { ctx.FillRectangle(Ui.ThemeBrush(edit is null ? "#284252" : "#344642"), new Rect(cx + 1, y + 1, (c == 0 ? 71 : 37) - 2, RowHeight - 2)); ctx.DrawRectangle(new Pen(Ui.Accent, 1), new Rect(cx + 1, y + 1, (c == 0 ? 71 : 37) - 2, RowHeight - 2)); }
+                    var activeEdit = r == row && col == column && edit is not null;
+                    if (selected) { ctx.FillRectangle(Ui.Selection, new Rect(cx + 1, y + 1, (c == 0 ? 71 : 37) - 2, RowHeight - 2)); ctx.DrawRectangle(new Pen(activeEdit && EditError is not null ? Ui.Error : Ui.Accent, activeEdit && EditError is not null ? 2 : 1), new Rect(cx + 1, y + 1, (c == 0 ? 71 : 37) - 2, RowHeight - 2)); }
                     var text = c == 0 ? n is null || n.Kind == NoteKind.Empty ? "· · ·" : NoteParser.Format(n) : n?.Effects.ElementAtOrDefault(c - 1) ?? "";
-                    if (selected && edit is not null) text = edit + "▏";
-                    var brush = c > 0 ? Ui.Muted : n?.Kind is NoteKind.Off or NoteKind.Cut ? Ui.Muted : Ui.Text;
+                    if (activeEdit) text = edit + "▏";
+                    var brush = activeEdit && EditError is not null ? Ui.Error : c > 0 ? Ui.Muted : n?.Kind is NoteKind.Off or NoteKind.Cut ? Ui.Muted : Ui.Text;
                     ctx.DrawText(Ui.Fmt(text, 11, brush, true), new Point(cx + 8, y + (!string.IsNullOrEmpty(n?.InstrumentId) ? 9 : 3)));
                 }
                 if (!string.IsNullOrEmpty(n?.InstrumentId)) { ctx.FillRectangle(Ui.ThemeBrush("#47362A"), new Rect(x + 1, y, TrackWidth - 2, 8)); ctx.DrawText(Ui.Fmt(song.FindInstrument(n.InstrumentId)?.Name ?? "Instrument", 7, Ui.Muted), new Point(x + 7, y)); }

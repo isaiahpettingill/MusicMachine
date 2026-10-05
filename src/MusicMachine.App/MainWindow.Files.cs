@@ -25,7 +25,7 @@ public sealed partial class MainView
     }
     private async Task<bool> SaveSong(bool saveAs = false)
     {
-        if (saveBusy || !tracker.CommitPending()) return false;
+        if (saveBusy || !tracker.CommitPending() || !CommitEditorFields()) return false;
         saveBusy = true; SetProjectInputEnabled(false);
         try
         {
@@ -104,7 +104,7 @@ public sealed partial class MainView
     }
     private async Task<bool> ConfirmDiscard()
     {
-        if (!tracker.CommitPending()) return false;
+        if (!tracker.CommitPending() || !CommitEditorFields()) return false;
         if (!editor.IsDirty) return true;
         var answer = await Ask("Save your changes?", $"{editor.Song.Title} has unsaved changes.", "Save", "Discard", "Cancel");
         return answer == "Discard" || answer == "Save" && await SaveSong();
@@ -131,7 +131,7 @@ public sealed partial class MainView
     }
     private async Task ExportAudio()
     {
-        if (!tracker.CommitPending()) return;
+        if (!tracker.CommitPending() || !CommitEditorFields()) return;
         if (exportBusy) { SetStatus("An export is already running"); return; }
         var choice = await Ask("Export game audio", "WAV is lossless and imports directly into Godot. FLAC is lossless and compact; check your game engine’s codec support. QOA is compact and lossy; check your Godot version or decoder. All three are built in, including in the browser, and export the complete arrangement at 48 kHz stereo.", OperatingSystem.IsBrowser() ? ["WAV", "FLAC", "QOA", "Cancel"] : ["WAV", "FLAC", "QOA", "FFmpeg…", "Cancel"]);
         if (choice == "FFmpeg…") { await ExportWithFfmpeg(); return; }
@@ -216,6 +216,7 @@ public sealed partial class MainView
     }
     private async Task ExportInstrument()
     {
+        if (!tracker.CommitPending() || !CommitEditorFields()) return;
         try
         {
             var ins = editor.Song.FindInstrument(selectedInstrument)!;

@@ -19,6 +19,13 @@ public sealed class Instrument
     public Waveform Waveform { get; set; } = Waveform.Pulse;
     public DrumKind Drum { get; set; }
     public double PulseWidth { get; set; } = .5;
+    // Linear oscillator height, before filtering, the ADSR envelope and output dB.
+    public double OscillatorAmplitude { get; set; } = 1;
+    public double TrianglePeak { get; set; } = .5;
+    // Separate from PulseWidth so old square presets with a dormant pulse width keep their sound.
+    public double SquareWidth { get; set; } = .5;
+    public double WaveHigh { get; set; } = 1;
+    public double WaveLow { get; set; } = -1;
     public double DetuneCents { get; set; }
     public double Phase { get; set; }
     public double VolumeDb { get; set; } = -12;

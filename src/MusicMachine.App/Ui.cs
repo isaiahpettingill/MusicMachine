@@ -62,7 +62,7 @@ internal static class Ui
         _ => Brush.Parse(hex)
     };
 
-    public static void Detach(Control c) { if (c.Parent is Panel p) p.Children.Remove(c); else if (c.Parent is ContentControl cc) cc.Content = null; else if (c.Parent is Decorator d) d.Child = null; }
+    public static void Detach(Control c) { if (c.Parent is Panel p) p.Children.Remove(c); else if (c.Parent is ContentControl cc) { cc.Content = null; cc.Presenter?.UpdateChild(); } else if (c.Parent is Decorator d) d.Child = null; }
     public static TextBlock Label(string text, double size = 12, IBrush? color = null) => new() { Text = text, FontSize = size, Foreground = color ?? Text, VerticalAlignment = VerticalAlignment.Center };
     public static TextBlock Heading(string text) => new() { Text = text, FontSize = 10, LetterSpacing = 1.5, Foreground = Muted, Margin = new(0, 0, 0, 10), FontWeight = FontWeight.SemiBold };
     public static Button Button(string text, Action action, string? tip = null, bool accent = false)

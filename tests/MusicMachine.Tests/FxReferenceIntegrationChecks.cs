@@ -13,6 +13,7 @@ internal static class FxReferenceIntegrationChecks
 {
     internal static void Run()
     {
+        TrackerEditRecoveryChecks.Run();
         var directory = Path.Combine(Path.GetTempPath(), "musicmachine-fx-reference-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
         var previousData = Environment.GetEnvironmentVariable("MUSICMACHINE_DATA");
@@ -63,14 +64,53 @@ internal static class FxReferenceIntegrationChecks
             Invoke(view, "InsertReferenceEffect", "V40"); Assert.Equal(new[] { "V40", "A47" }, Note().Effects);
             Assert.Equal(1, tracker.SelectedTrack); Assert.Equal(2, tracker.SelectedRow); Assert.Equal(1, tracker.EffectColumns);
             Assert.Contains("effectColumns=1\n", preferences);
-            // An invalid buffered cell is never discarded by a reference click.
-            tracker.RaiseEvent(new TextInputEventArgs { RoutedEvent = InputElement.TextInputEvent, Text = "invalid" });
-            before = SongFile.Write(editor.Song); Invoke(view, "InsertReferenceEffect", "G80");
-            Assert.True(tracker.HasPendingEdit); Assert.Equal(before, SongFile.Write(editor.Song));
+            // F2 stays available for malformed FX and keeps the draft until an explicit replacement.
+            tracker.RaiseEvent(new TextInputEventArgs { RoutedEvent = InputElement.TextInputEvent, Text = "8" });
+            before = SongFile.Write(editor.Song); revision = editor.Revision;
+            tracker.RaiseEvent(new KeyEventArgs { RoutedEvent = InputElement.KeyDownEvent, Key = Key.F2 });
+            Dispatcher.UIThread.RunJobs();
+            Assert.True(search.IsFocused); Assert.True(tracker.HasPendingEdit); Assert.Equal("8", tracker.EditText);
+            Assert.NotNull(tracker.EditError); Assert.Equal(before, SongFile.Write(editor.Song)); Assert.Equal(revision, editor.Revision);
+            Assert.Contains("replaces unfinished", Named<TextBlock>(pane, "FxInsertContext").Text);
+            // A rejected replacement preserves both the draft and original music.
+            Invoke(view, "InsertReferenceEffect", "A57");
+            Assert.True(tracker.HasPendingEdit); Assert.Equal("8", tracker.EditText); Assert.Equal(before, SongFile.Write(editor.Song));
+            Assert.Equal(FxCatalog.SyntaxHelp, tracker.EditError);
             var unchangedPreferences = preferences;
             Invoke(view, "SetEffectColumns", 6);
             Assert.Equal(1, tracker.EffectColumns); Assert.Equal(unchangedPreferences, preferences);
-            tracker.RaiseEvent(new KeyEventArgs { RoutedEvent = InputElement.KeyDownEvent, Key = Key.Escape });
+            Invoke(view, "InsertReferenceEffect", "G80"); Dispatcher.UIThread.RunJobs();
+            Assert.False(tracker.HasPendingEdit); Assert.Null(tracker.EditError); Assert.True(tracker.IsFocused);
+            Assert.Equal(new[] { "G80", "A47" }, Note().Effects); Assert.Equal(67, Note().Pitch);
+            Assert.Equal(2, tracker.SelectedRow); Assert.Equal(1, tracker.SelectedTrack); Assert.Equal(1, tracker.SelectedColumn);
+            Assert.Equal(revision + 1, editor.Revision);
+            Invoke(view, "Undo"); Assert.Equal(before, SongFile.Write(editor.Song));
+            // A note draft cannot be replaced by an FX. Escape also works from the reference search.
+            tracker.Select(2, 1, 0);
+            tracker.RaiseEvent(new TextInputEventArgs { RoutedEvent = InputElement.TextInputEvent, Text = "invalid" });
+            tracker.RaiseEvent(new KeyEventArgs { RoutedEvent = InputElement.KeyDownEvent, Key = Key.F2 });
+            Dispatcher.UIThread.RunJobs();
+            Assert.True(search.IsFocused); Assert.False(insert.IsEnabled); Assert.True(tracker.HasPendingEdit);
+            Invoke(view, "InsertReferenceEffect", "G80"); Assert.Equal(before, SongFile.Write(editor.Song)); Assert.Equal("invalid", tracker.EditText);
+            Invoke(view, "ShowFxReference"); Dispatcher.UIThread.RunJobs();
+            search.RaiseEvent(new KeyEventArgs { RoutedEvent = InputElement.KeyDownEvent, Key = Key.Escape }); Dispatcher.UIThread.RunJobs();
+            Assert.False(tracker.HasPendingEdit); Assert.True(tracker.IsFocused); Assert.True(insert.IsEnabled);
+            Assert.Equal(before, SongFile.Write(editor.Song));
+            // Switching inspector content also leaves unfinished FX available for recovery.
+            tracker.Select(2, 1, 1);
+            tracker.RaiseEvent(new TextInputEventArgs { RoutedEvent = InputElement.TextInputEvent, Text = "8" });
+            Field<ComboBox>(view, "inspectorPicker").SelectedIndex = 0;
+            Assert.True(tracker.HasPendingEdit); Assert.Equal(0, Field<ComboBox>(view, "inspectorPicker").SelectedIndex);
+            Field<ComboBox>(view, "inspectorPicker").SelectedIndex = 1; Dispatcher.UIThread.RunJobs();
+            Assert.True(search.IsFocused); Assert.Equal("8", tracker.EditText);
+            search.RaiseEvent(new KeyEventArgs { RoutedEvent = InputElement.KeyDownEvent, Key = Key.Escape }); Dispatcher.UIThread.RunJobs();
+            Assert.False(tracker.HasPendingEdit); Assert.Equal(before, SongFile.Write(editor.Song));
+            // Paste replaces the draft before dispatching the host transaction, so the host's
+            // pending-edit guard cannot reject it while reporting a successful paste.
+            tracker.RaiseEvent(new TextInputEventArgs { RoutedEvent = InputElement.TextInputEvent, Text = "8" });
+            Assert.True(tracker.PasteText("V50")); Assert.False(tracker.HasPendingEdit);
+            Assert.Equal(new[] { "V50", "A47" }, Note().Effects); Assert.Equal(67, Note().Pitch);
+            Invoke(view, "Undo"); Assert.Equal(before, SongFile.Write(editor.Song));
             Invoke(view, "SelectWorkspace", "Drums"); Assert.False(insert.IsEnabled);
             Invoke(view, "InsertReferenceEffect", "G80"); Assert.Equal(before, SongFile.Write(editor.Song));
             Invoke(view, "SelectWorkspace", "Tracker"); Assert.True(insert.IsEnabled);

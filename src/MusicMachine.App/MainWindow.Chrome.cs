@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Layout;
+using Avalonia.LogicalTree;
 using Avalonia.Media;
 using IconPacks.Avalonia.Material;
 using MusicMachine.Core;
@@ -10,7 +11,7 @@ namespace MusicMachine.App;
 
 public sealed partial class MainView
 {
-    private sealed class ViewSettings { public string Theme = "catppuccin-mocha"; public bool Library = true; public bool Inspector; public string InspectorContent = "instrument"; public bool CheckForUpdates = true; public string Workspace = "Tracker"; public int EffectColumns = 2; }
+    private sealed class ViewSettings { public string Theme = "catppuccin-mocha"; public bool Library = true; public bool Inspector; public string InspectorContent = "instrument"; public double InspectorWidth = 248; public bool CheckForUpdates = true; public string Workspace = "Tracker"; public int EffectColumns = 2; }
     private readonly ViewSettings viewSettings = new();
     private Grid? panes;
     private Border? libraryPane, inspectorPane;
@@ -33,7 +34,7 @@ public sealed partial class MainView
             foreach (var line in text.Split('\n'))
             {
                 var parts = line.Split('=', 2); if (parts.Length != 2) continue;
-                switch (parts[0]) { case "effectColumns": if (int.TryParse(parts[1].Trim(), out var count)) viewSettings.EffectColumns = Math.Clamp(count, 0, FxParser.MaxColumns); break; case "inspectorContent": viewSettings.InspectorContent = parts[1].Trim() == "fx" ? "fx" : "instrument"; break; case "checkForUpdates": viewSettings.CheckForUpdates = parts[1].Trim() != "false"; break; case "theme": viewSettings.Theme = parts[1].Trim(); break; case "library": viewSettings.Library = parts[1].Trim() != "false"; break; case "inspector": viewSettings.Inspector = parts[1].Trim() == "true"; break; case "workspace": if (new[] { "Tracker", "Drums", "Instrument", "Arrangement", "Automation", "Sampling" }.Contains(parts[1].Trim())) viewSettings.Workspace = parts[1].Trim(); break; }
+                switch (parts[0]) { case "inspectorWidth": if (double.TryParse(parts[1].Trim(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var width) && double.IsFinite(width)) viewSettings.InspectorWidth = Math.Clamp(width, 238, 1600); break; case "effectColumns": if (int.TryParse(parts[1].Trim(), out var count)) viewSettings.EffectColumns = Math.Clamp(count, 0, FxParser.MaxColumns); break; case "inspectorContent": viewSettings.InspectorContent = parts[1].Trim() == "fx" ? "fx" : "instrument"; break; case "checkForUpdates": viewSettings.CheckForUpdates = parts[1].Trim() != "false"; break; case "theme": viewSettings.Theme = parts[1].Trim(); break; case "library": viewSettings.Library = parts[1].Trim() != "false"; break; case "inspector": viewSettings.Inspector = parts[1].Trim() == "true"; break; case "workspace": if (new[] { "Tracker", "Drums", "Instrument", "Arrangement", "Automation", "Sampling" }.Contains(parts[1].Trim())) viewSettings.Workspace = parts[1].Trim(); break; }
             }
             mode = viewSettings.Workspace;
         }
@@ -42,7 +43,7 @@ public sealed partial class MainView
     }
     private void SaveViewSettings()
     {
-        var text = $"theme={viewSettings.Theme}\nlibrary={viewSettings.Library.ToString().ToLowerInvariant()}\ninspector={viewSettings.Inspector.ToString().ToLowerInvariant()}\nworkspace={mode}\ncheckForUpdates={viewSettings.CheckForUpdates.ToString().ToLowerInvariant()}\ninspectorContent={viewSettings.InspectorContent}\neffectColumns={viewSettings.EffectColumns}\n";
+        var text = $"theme={viewSettings.Theme}\nlibrary={viewSettings.Library.ToString().ToLowerInvariant()}\ninspector={viewSettings.Inspector.ToString().ToLowerInvariant()}\nworkspace={mode}\ncheckForUpdates={viewSettings.CheckForUpdates.ToString().ToLowerInvariant()}\ninspectorContent={viewSettings.InspectorContent}\neffectColumns={viewSettings.EffectColumns}\ninspectorWidth={viewSettings.InspectorWidth.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)}\n";
         try { if (EditorPlatform.SavePreferences is { } save) save(text); else AtomicWrite(Path.Combine(Path.GetDirectoryName(recoveryPath)!, "view-settings.txt"), System.Text.Encoding.UTF8.GetBytes(text)); } catch (Exception e) { SetStatus("View settings: " + e.Message); }
     }
     private Control BuildShell()
@@ -58,13 +59,13 @@ public sealed partial class MainView
         workspacePicker.SelectionChanged += (_, _) => { if (!refreshing && workspacePicker.SelectedItem is string name && name != mode) SelectWorkspace(name); };
         centerItemPicker.SelectionChanged += (_, _) => { if (refreshing || centerItemPicker.SelectedIndex < 0) return; var n = centerItemPicker.SelectedIndex; if (mode is "Tracker" or "Drums") { if (n < editor.Song.Patterns.Count && tracker.CommitPending()) { activePattern = editor.Song.Patterns[n].Id; SynchronizeDrumSound(); Refresh(); } } else if (mode is "Instrument" or "Sampling") { if (n < editor.Song.Instruments.Count) { selectedInstrument = editor.Song.Instruments[n].Id; Refresh(); } } else if (mode == "Automation" && n < editor.Song.Tracks.Count) { chosenTrack = n; Refresh(); } };
         var transportBorder = Ui.Panel(transport, new Thickness(0)); transportBorder.BorderThickness = new(0, 1, 0, 1); Grid.SetRow(transportBorder, 1); root.Children.Add(transportBorder);
-        panes = new Grid { ColumnDefinitions = new("180,*,248") }; Grid.SetRow(panes, 2);
+        panes = new Grid { Name = "WorkspacePanes", ColumnDefinitions = new("180,*,6,248") }; panes.SizeChanged += (_, _) => UpdatePaneLayout(); Grid.SetRow(panes, 2);
         var libraryBody = new Grid { RowDefinitions = new("34,*"), Margin = new(8, 4) }; libraryBody.Children.Add(libraryPicker); Grid.SetRow(libraryScroll, 1); libraryBody.Children.Add(libraryScroll);
         libraryPicker.SelectionChanged += (_, _) => { libraryScroll.Content = null; libraryScroll.Content = libraryPicker.SelectedIndex == 0 ? patternList : library; };
         libraryPicker.SelectedIndex = mode is "Instrument" or "Sampling" ? 1 : 0;
         libraryScroll.Content = libraryPicker.SelectedIndex == 1 ? library : patternList; libraryPane = Ui.Panel(libraryBody, new Thickness(0)); panes.Children.Add(libraryPane);
         Grid.SetColumn(workArea, 1); panes.Children.Add(workArea);
-        inspectorPane = Ui.Panel(BuildInspectorShell(), new Thickness(0)); inspectorPane.BorderThickness = new(1, 0, 0, 0); Grid.SetColumn(inspectorPane, 2); panes.Children.Add(inspectorPane); root.Children.Add(panes);
+        inspectorPane = Ui.Panel(BuildInspectorShell(), new Thickness(0)); inspectorPane.BorderThickness = new(1, 0, 0, 0); Grid.SetColumn(inspectorPane, 3); panes.Children.Add(inspectorPane); inspectorSplitter = BuildInspectorSplitter(); Grid.SetColumn(inspectorSplitter, 2); panes.Children.Add(inspectorSplitter); root.Children.Add(panes);
         status.Margin = new(10, 0); status.TextTrimming = TextTrimming.CharacterEllipsis; Grid.SetRow(status, 3); root.Children.Add(status);
         UpdatePaneLayout(); return root;
     }
@@ -85,8 +86,8 @@ public sealed partial class MainView
         var effects = Group("FX columns", new[] { 0, 1, 2, 4, 6 }.Select(n => Command(n == 0 ? "Hide FX" : n.ToString(), () => SetEffectColumns(n))).ToArray());
         fxReferenceMenu = Command("FX reference", ShowFxReference, "F2"); fxReferenceMenu.ToggleType = MenuItemToggleType.CheckBox;
         var view = Group("_View", libraryMenu, inspectorMenu, fxReferenceMenu, workspace, themes, effects);
-        var pattern = Group("_Pattern", Command("New pattern", AddPattern), Command("Duplicate pattern", DuplicatePattern), Command("Rename pattern…", () => _ = EditText("Rename pattern", editor.Song.FindPattern(activePattern)!.Name, t => Change(s => s.FindPattern(activePattern)!.Name = t))), Command("Pattern length…", () => _ = EditText("Pattern rows (4–256)", editor.Song.FindPattern(activePattern)!.Length.ToString(), t => { if (int.TryParse(t, out var n)) ResizePattern(Math.Clamp(n, 4, 256)); })), new Separator(), Command("Four-on-the-floor drums", () => ApplyDrumPreset(false)), Command("Broken beat drums", () => ApplyDrumPreset(true)), Command("Clear drum steps", () => Change(s => { foreach (var lane in s.FindPattern(activePattern)!.Drums) lane.Steps = Enumerable.Repeat((byte)0, s.FindPattern(activePattern)!.Length).ToList(); })));
-        var track = Group("_Track", Command("Add track", AddTrack), Command("Move / remove selected track…", () => _ = TrackOptions(chosenTrack)), Command("Insert instrument change", SetInstrumentEvent));
+        var pattern = Group("_Pattern", Command("Add selected pattern to song", AddSelectedPatternToSong), Command("Open song arrangement", OpenSongArrangement), new Separator(), Command("New pattern", AddPattern), Command("Duplicate pattern", DuplicatePattern), Command("Rename pattern…", () => _ = EditText("Rename pattern", editor.Song.FindPattern(activePattern)!.Name, t => Change(s => s.FindPattern(activePattern)!.Name = t))), Command("Pattern length…", () => _ = EditText("Pattern rows (4–256)", editor.Song.FindPattern(activePattern)!.Length.ToString(), t => { if (int.TryParse(t, out var n)) ResizePattern(Math.Clamp(n, 4, 256)); })), new Separator(), Command("Four-on-the-floor drums", () => ApplyDrumPreset(false)), Command("Broken beat drums", () => ApplyDrumPreset(true)), Command("Clear drum steps", () => Change(s => { foreach (var lane in s.FindPattern(activePattern)!.Drums) lane.Steps = Enumerable.Repeat((byte)0, s.FindPattern(activePattern)!.Length).ToList(); })));
+        var track = Group("_Track", Command("Add note track column", AddTrack), Command("Add FX column", AddEffectColumn), Command("Move / remove selected track…", () => _ = TrackOptions(chosenTrack)), Command("Insert instrument change", SetInstrumentEvent));
         var instrument = Group("_Instrument", Command("New instrument", AddInstrument), Command("Make local copy", MakeLocal), Command("Edit in center", () => SelectWorkspace("Instrument")), Command("Sample a waveform", () => SelectWorkspace("Sampling")), Command("Audition", PreviewInstrument));
         if (!OperatingSystem.IsBrowser()) file.ItemsSource = ((Control[])file.ItemsSource!).Concat([new Separator(), Command("Configure FFmpeg…", () => _ = ConfigureSamplingFfmpeg())]).ToArray();
         var transport = Group("_Transport", Command("Play / stop", TogglePlay, "Space"), Command("Stop", Stop), Command("Play current pattern", PlayPattern, "F6"), Command("Play from cursor", PlayFromCursor, "F5"), Command("Toggle loop", () => { loopToggle.IsChecked = loopToggle.IsChecked != true; RefreshChrome(); }));
@@ -94,18 +95,24 @@ public sealed partial class MainView
     }
     private void RefreshChrome()
     {
-        if (projectLabel is not null) projectLabel.Text = editor.Song.Title;
-        UpdateReferenceContext();
-        workspacePicker.SelectedItem = mode;
-        if (mode is "Tracker" or "Drums") { centerItemPicker.IsVisible = true; centerItemPicker.ItemsSource = editor.Song.Patterns.Select(p => p.Name).ToArray(); centerItemPicker.SelectedIndex = editor.Song.Patterns.FindIndex(p => p.Id == activePattern); }
-        else if (mode is "Instrument" or "Sampling") { centerItemPicker.IsVisible = true; centerItemPicker.ItemsSource = editor.Song.Instruments.Select(i => i.Name).ToArray(); centerItemPicker.SelectedIndex = editor.Song.Instruments.FindIndex(i => i.Id == selectedInstrument); }
-        else if (mode == "Automation") { centerItemPicker.IsVisible = true; centerItemPicker.ItemsSource = editor.Song.Tracks.Select(t => t.Name).ToArray(); centerItemPicker.SelectedIndex = chosenTrack; }
-        else centerItemPicker.IsVisible = false;
-        if (undoMenu is not null) undoMenu.IsEnabled = editor.CanUndo; if (redoMenu is not null) redoMenu.IsEnabled = editor.CanRedo;
-        if (libraryMenu is not null) libraryMenu.IsChecked = viewSettings.Library; if (inspectorMenu is not null) inspectorMenu.IsChecked = viewSettings.Inspector;
-        foreach (var (item, id) in themeItems) item.IsChecked = id == viewSettings.Theme;
-        if (loopButton is { } loop) { if (loopToggle.IsChecked == true) loop.Classes.Add("selected"); else loop.Classes.Remove("selected"); }
+        var wasRefreshing = refreshing; refreshing = true;
+        try
+        {
+            if (projectLabel is not null) projectLabel.Text = editor.Song.Title;
+            UpdateReferenceContext();
+            workspacePicker.SelectedItem = mode;
+            if (mode is "Tracker" or "Drums") { centerItemPicker.IsVisible = true; centerItemPicker.ItemsSource = editor.Song.Patterns.Select(p => p.Name).ToArray(); centerItemPicker.SelectedIndex = editor.Song.Patterns.FindIndex(p => p.Id == activePattern); }
+            else if (mode is "Instrument" or "Sampling") { centerItemPicker.IsVisible = true; centerItemPicker.ItemsSource = editor.Song.Instruments.Select(i => i.Name).ToArray(); centerItemPicker.SelectedIndex = editor.Song.Instruments.FindIndex(i => i.Id == selectedInstrument); }
+            else if (mode == "Automation") { centerItemPicker.IsVisible = true; centerItemPicker.ItemsSource = editor.Song.Tracks.Select(t => t.Name).ToArray(); centerItemPicker.SelectedIndex = chosenTrack; }
+            else centerItemPicker.IsVisible = false;
+            if (undoMenu is not null) undoMenu.IsEnabled = editor.CanUndo; if (redoMenu is not null) redoMenu.IsEnabled = editor.CanRedo;
+            if (libraryMenu is not null) libraryMenu.IsChecked = viewSettings.Library; if (inspectorMenu is not null) inspectorMenu.IsChecked = viewSettings.Inspector;
+            foreach (var (item, id) in themeItems) item.IsChecked = id == viewSettings.Theme;
+            if (loopButton is { } loop) { if (loopToggle.IsChecked == true) loop.Classes.Add("selected"); else loop.Classes.Remove("selected"); }
+        }
+        finally { refreshing = wasRefreshing; }
     }
+
     private void SetEffectColumns(int count)
     {
         if (!tracker.CommitPending()) return;
@@ -127,34 +134,55 @@ public sealed partial class MainView
     {
         if (left) viewSettings.Library = !viewSettings.Library; else viewSettings.Inspector = !viewSettings.Inspector;
         UpdatePaneLayout(); SaveViewSettings();
-        // Only pane checks changed. RefreshChrome also resets the center picker,
-        // whose SelectionChanged can rebuild/detach the focused workspace while
-        // this key event is still routing, dropping the next browser shortcut.
         if (libraryMenu is not null) libraryMenu.IsChecked = viewSettings.Library;
         if (inspectorMenu is not null) inspectorMenu.IsChecked = viewSettings.Inspector;
         RestoreInputFocus();
     }
-    private void UpdatePaneLayout()
-    {
-        if (panes is null) return; var inspect = viewSettings.Inspector && (mode != "Instrument" || ShowingFxReference);
-        panes.ColumnDefinitions[0].Width = new GridLength(viewSettings.Library ? 180 : 0); panes.ColumnDefinitions[2].Width = new GridLength(inspect ? 248 : 0);
-        if (libraryPane is not null) libraryPane.IsVisible = viewSettings.Library; if (inspectorPane is not null) inspectorPane.IsVisible = inspect;
-    }
+
     private void PrepareInspector()
     {
-        Ui.Detach(instrumentPanel); instrumentPanel.SetWideLayout(mode == "Instrument");
-        if (ShowingFxReference)
+        instrumentPanel.SetWideLayout(mode == "Instrument");
+        Control? desired = null;
+        if (ShowingFxReference) desired = fxReferencePanel ??= new FxReferencePanel(InsertReferenceEffect);
+        else if (mode != "Instrument") desired = instrumentPanel;
+        if (!ReferenceEquals(inspectorHost.Content, desired))
         {
-            fxReferencePanel ??= new FxReferencePanel(InsertReferenceEffect);
-            if (!ReferenceEquals(inspectorHost.Content, fxReferencePanel)) { Ui.Detach(fxReferencePanel); inspectorHost.Content = fxReferencePanel; }
+            inspectorHost.Content = null;
+            inspectorHost.Presenter?.UpdateChild();
+            if (desired is not null) Ui.Detach(desired);
+            inspectorHost.Content = desired;
         }
-        else inspectorHost.Content = mode != "Instrument" ? instrumentPanel : null;
         UpdateReferenceContext(); UpdatePaneLayout();
     }
-    private Control BuildInstrumentWorkspace() => new ScrollViewer { Content = instrumentPanel, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, Margin = new(12, 8) };
+    private Control BuildInstrumentWorkspace()
+    {
+        Ui.Detach(instrumentPanel);
+        return new ScrollViewer { Content = instrumentPanel, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, Margin = new(12, 8) };
+    }
+    private void UpdateTrackerCommands()
+    {
+        if (workArea.Content is not Control content || mode != "Tracker") return;
+        foreach (var button in content.GetLogicalDescendants().OfType<Button>())
+        {
+            if (button.Name == "TrackerAddTrack") button.IsEnabled = editor.Song.Tracks.Count < SongLimits.MaxTracks;
+            else if (button.Name == "TrackerAddFx") button.IsEnabled = tracker.EffectColumns < FxParser.MaxColumns;
+        }
+    }
     private Control BuildTracker()
     {
-        Ui.Detach(tracker); return new ScrollViewer { Content = tracker, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Margin = new(8) };
+        Ui.Detach(tracker);
+        var body = new Grid { RowDefinitions = new("Auto,*"), Margin = new(8) };
+        var commands = new WrapPanel { Orientation = Orientation.Horizontal, Margin = new(0, 0, 0, 6) };
+        var addTrack = TrackerCommand("Add track", PackIconMaterialKind.Plus, AddTrack, "Add a new note/instrument track column", "TrackerAddTrack");
+        addTrack.IsEnabled = editor.Song.Tracks.Count < SongLimits.MaxTracks;
+        var addFx = TrackerCommand("Add FX column", PackIconMaterialKind.Plus, AddEffectColumn, "Show one more simultaneous effect column per track; existing music is unchanged", "TrackerAddFx");
+        addFx.IsEnabled = tracker.EffectColumns < FxParser.MaxColumns;
+        commands.Children.Add(addTrack); commands.Children.Add(addFx);
+        commands.Children.Add(TrackerCommand("Add to song", PackIconMaterialKind.ArrowRight, AddSelectedPatternToSong, "Append this reusable pattern to the song arrangement", "TrackerAddToSong"));
+        commands.Children.Add(TrackerCommand("Song arrangement", PackIconMaterialKind.FolderOpen, OpenSongArrangement, "Put patterns in order, repeat them, and play or export the whole song", "TrackerOpenSong"));
+        body.Children.Add(commands);
+        var scroll = new ScrollViewer { Content = tracker, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        Grid.SetRow(scroll, 1); body.Children.Add(scroll); return body;
     }
     private Control BuildAutomationWorkspace()
     {

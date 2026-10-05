@@ -20,13 +20,15 @@ public sealed class InstrumentPanel : UserControl
     private readonly WaveformDisplay _wave;
     private readonly EnvelopeDisplay _envelope;
     private readonly StackPanel _body, _customTools, _tableTools;
+    private readonly Control _shapeFields, _triangleFields, _pulseFields, _squareFields, _levelFields;
+    private readonly Button _editPoints;
     private readonly Grid _sectionLayout, _toneLayout, _filterFields, _pitchFields;
     private readonly StackPanel _soundColumn, _panel;
     private readonly Expander _oscillatorSection, _amplitudeSection, _filterSection, _pitchSection, _tuningSection;
     private bool _wideLayout, _twoColumns, _layoutApplied;
     private readonly Control _oscillatorFields;
     private readonly Button _addFrame, _removeFrame, _duplicateFrame;
-    private readonly List<(NumericUpDown Control, Func<Instrument, double> Read)> _numbers = [];
+    private readonly List<(EditorNumber Control, Func<Instrument, double> Read)> _numbers = [];
     private readonly List<(Slider Control, TextBlock Readout, Func<Instrument, double> Read, Func<double, string> Format)> _sliders = [];
     private Instrument? _instrument;
     private string? _instrumentId;
@@ -81,17 +83,21 @@ public sealed class InstrumentPanel : UserControl
             if (_refreshing || _waveform.SelectedIndex < 0) return;
             var shape = (Waveform)_waveform.SelectedIndex;
             if (_instrument?.Waveform == shape) return;
+            // Capture the source shape before changing the enum. Keep amplitude and phase separate.
+            var source = _instrument is null ? ShapeSamples(Waveform.Sine) : WaveformShape.Cycle(_instrument);
             Edit(i =>
             {
                 i.Waveform = shape;
-                if (shape == Waveform.Custom && i.CustomWave.Length == 0) i.CustomWave = ShapeSamples(Waveform.Sine);
+                if (shape == Waveform.Custom && i.CustomWave.Length == 0) i.CustomWave = source;
                 if (shape == Waveform.Wavetable && i.Wavetable.Count == 0)
-                    i.Wavetable = [ShapeSamples(Waveform.Sine), ShapeSamples(Waveform.Square)];
+                    i.Wavetable = [source, ShapeSamples(Waveform.Square)];
             });
         };
-        _wave = new WaveformDisplay { Name = "WaveformEditor", Height = 84, Margin = new(0, 8, 0, 0) };
-        Accessible(_wave, "Waveform preview and sample editor", "For custom waves and wavetable frames, drag to draw 128 signed PCM16 samples. Arrow keys select and adjust samples; Shift makes larger adjustments. Escape cancels a stroke.");
+        _wave = new WaveformDisplay { Name = "WaveformEditor", Height = 112, Margin = new(0, 8, 0, 0) };
+        Accessible(_wave, "Waveform and shape editor", "Drag the right amplitude handle for height. Triangle: drag the peak. Square or pulse: drag the width, high and low handles. Custom and wavetable: draw points. Escape cancels; release makes one undo. Shapes are shown at phase zero.");
         _wave.DrawCompleted += ReplaceEditorSamples;
+        _wave.ShapeCompleted += preview => Edit(i => CopyShape(preview, i));
+        _wave.PreviewChanged += ShowShapePreview;
         _waveHint = Ui.Label("ONE CYCLE", 9, Ui.Muted);
         _waveHint.LetterSpacing = .8; _waveHint.Margin = new(0, 5, 0, 0);
         _customTools = new StackPanel { Spacing = 5, Margin = new(0, 8, 0, 0) };
@@ -107,7 +113,7 @@ public sealed class InstrumentPanel : UserControl
                 _ => PackIconMaterialKind.ShuffleVariant
             };
             var button = SmallIconButton(icon,
-                () => ReplaceEditorSamples(shape == Waveform.Noise ? RandomSamples() : ShapeSamples(shape)), $"Replace the edited waveform with a {shape.ToString().ToLowerInvariant()} shape");
+                () => ReplaceEditorSamples(ShapeSamples(shape)), $"Replace the edited waveform with a {shape.ToString().ToLowerInvariant()} shape");
             presets.Children.Add(button);
         }
         _customTools.Children.Add(presets);
@@ -154,9 +160,29 @@ public sealed class InstrumentPanel : UserControl
         _drum.Margin = new(0, 4, 0, 8); oscillator.Children.Add(_drum);
         ToolTip.SetTip(_drum, "Choose an oscillator or a synthesized drum voice");
         oscillator.Children.Add(_waveform); oscillator.Children.Add(_wave); oscillator.Children.Add(_waveHint);
+        _editPoints = new Button { Name = "EditWaveformPoints", Content = "Edit points", MinHeight = 26,
+            FontSize = 10, Padding = new(8, 3), Margin = new(0, 6, 0, 0), HorizontalAlignment = HorizontalAlignment.Left };
+        Accessible(_editPoints, "Convert preset to editable points", "Turn this preset into a 128-point custom cycle, preserving oscillator amplitude and phase. Noise becomes a repeatable fixed-seed loop. One undo restores the preset.");
+        _editPoints.Click += (_, _) => { if (_instrument is not null) ReplaceEditorSamples(WaveformShape.Cycle(_instrument)); };
+        oscillator.Children.Add(_editPoints);
+        _triangleFields = NumberGrid(Number("Peak position · %", "TrianglePeak", 1, 99, 1,
+            i => i.TrianglePeak * 100, (i, v) => i.TrianglePeak = v / 100, "0.#"));
+        _pulseFields = NumberGrid(Number("Pulse width · %", "PulseWidth", 1, 99, 1,
+            i => i.PulseWidth * 100, (i, v) => i.PulseWidth = v / 100, "0.#"));
+        _squareFields = NumberGrid(Number("Square width · %", "SquareWidth", 1, 99, 1,
+            i => i.SquareWidth * 100, (i, v) => i.SquareWidth = v / 100, "0.#"));
+        _levelFields = NumberGrid(
+            Number("High level", "WaveHigh", -1, 1, .01, i => i.WaveHigh, (i, v) => i.WaveHigh = v, "0.###"),
+            Number("Low level", "WaveLow", -1, 1, .01, i => i.WaveLow, (i, v) => i.WaveLow = v, "0.###"));
+        var shapeFields = new StackPanel { Spacing = 7, Margin = new(0, 8, 0, 0) };
+        shapeFields.Children.Add(NumberGrid(Number("Oscillator amplitude", "OscillatorAmplitude", 0, 1, .01,
+            i => i.OscillatorAmplitude, (i, v) => i.OscillatorAmplitude = v, "0.###")));
+        shapeFields.Children.Add(_triangleFields); shapeFields.Children.Add(_pulseFields);
+        shapeFields.Children.Add(_squareFields); shapeFields.Children.Add(_levelFields);
+        _shapeFields = shapeFields;
+        oscillator.Children.Add(_shapeFields);
         oscillator.Children.Add(_tableTools); oscillator.Children.Add(_customTools);
         _oscillatorFields = NumberGrid(
-            Number("Pulse width %", "PulseWidth", 1, 99, 1, i => i.PulseWidth * 100, (i, v) => i.PulseWidth = v / 100, "0"),
             Number("Detune · cents", "DetuneCents", -1200, 1200, 1, i => i.DetuneCents, (i, v) => i.DetuneCents = v, "0"),
             Number("Phase · degrees", "Phase", 0, 360, 1, i => i.Phase * 360, (i, v) => i.Phase = v / 360, "0.#"));
         _tuningSection = Section("Tuning", _oscillatorFields, false);
@@ -252,11 +278,10 @@ public sealed class InstrumentPanel : UserControl
     public void ShowInstrument(Song song, string? instrumentId)
     {
         var selected = instrumentId is null ? null : song.FindInstrument(instrumentId);
-        if (_instrumentId != selected?.Id)
-        {
-            _editingFrame = 0;
-            _wave.CancelGesture();
-        }
+        // A selection change, undo or concurrent model edit cancels the uncommitted local gesture.
+        if (!ReferenceEquals(_instrument, selected)) _wave.CancelGesture();
+        var changedInstrument = _instrumentId != selected?.Id;
+        if (changedInstrument) _editingFrame = 0;
         _instrument = selected; _instrumentId = selected?.Id;
         _refreshing = true;
         try
@@ -265,7 +290,7 @@ public sealed class InstrumentPanel : UserControl
             if (selected is null)
             {
                 _name.Text = ""; _name.PlaceholderText = "Select an instrument";
-                _scope.Text = "NO SOUND"; _wave.SetSamples(ShapeSamples(Waveform.Sine), false);
+                _scope.Text = "NO SOUND"; _wave.Show(null);
                 return;
             }
             _name.PlaceholderText = "Instrument name";
@@ -279,6 +304,12 @@ public sealed class InstrumentPanel : UserControl
             _tuningSection.IsVisible = selected.Drum == DrumKind.None;
             var custom = selected.Drum == DrumKind.None && selected.Waveform is Waveform.Custom or Waveform.Wavetable;
             _customTools.IsVisible = custom;
+            _shapeFields.IsVisible = selected.Drum == DrumKind.None;
+            _triangleFields.IsVisible = selected.Waveform == Waveform.Triangle;
+            _pulseFields.IsVisible = selected.Waveform == Waveform.Pulse;
+            _squareFields.IsVisible = selected.Waveform == Waveform.Square;
+            _levelFields.IsVisible = selected.Waveform is Waveform.Square or Waveform.Pulse;
+            _editPoints.IsVisible = selected.Drum == DrumKind.None && !custom;
             _tableTools.IsVisible = selected.Drum == DrumKind.None && selected.Waveform == Waveform.Wavetable;
             _editingFrame = Math.Clamp(_editingFrame, 0, Math.Max(0, selected.Wavetable.Count - 1));
             _frames.ItemsSource = Enumerable.Range(1, selected.Wavetable.Count).Select(n => $"Frame {n:00}").ToArray();
@@ -290,7 +321,7 @@ public sealed class InstrumentPanel : UserControl
             foreach (var (control, read) in _numbers)
             {
                 var value = read(selected);
-                if (double.IsFinite(value)) control.Value = Math.Clamp((decimal)value, control.Minimum, control.Maximum);
+                if (double.IsFinite(value)) control.SetModelValue(Math.Clamp((decimal)value, control.Minimum, control.Maximum), changedInstrument);
             }
             foreach (var (control, readout, read, format) in _sliders)
             {
@@ -338,31 +369,55 @@ public sealed class InstrumentPanel : UserControl
     {
         if (_instrument is null) return ShapeSamples(Waveform.Sine);
         if (_instrument.Waveform == Waveform.Wavetable && _instrument.Wavetable.Count > 0)
-            return Resample(_instrument.Wavetable[Math.Clamp(_editingFrame, 0, _instrument.Wavetable.Count - 1)]);
+            return (short[])_instrument.Wavetable[Math.Clamp(_editingFrame, 0, _instrument.Wavetable.Count - 1)].Clone();
         if (_instrument.Waveform == Waveform.Custom && _instrument.CustomWave.Length > 0)
-            return Resample(_instrument.CustomWave);
-        return ShapeSamples(_instrument.Waveform, _instrument.PulseWidth, _instrument.Phase);
+            return (short[])_instrument.CustomWave.Clone();
+        return WaveformShape.Cycle(_instrument);
     }
 
     private void RefreshWave()
     {
         if (_instrument is null) return;
-        var custom = _instrument.Drum == DrumKind.None && _instrument.Waveform is Waveform.Custom or Waveform.Wavetable;
-        _wave.SetSamples(EditorSamples(), custom);
-        _waveHint.Text = _instrument.Drum != DrumKind.None ? "DRUM OSCILLATOR" : custom ? "128 SAMPLES · SIGNED PCM16" : "ONE CYCLE · OSCILLATOR PREVIEW";
+        _wave.Show(_instrument, _editingFrame);
+        _waveHint.Text = _instrument.Drum != DrumKind.None ? "DRUM OSCILLATOR" : _instrument.Waveform switch
+        {
+            Waveform.Triangle => "DRAG PEAK · RIGHT HANDLE = HEIGHT",
+            Waveform.Square or Waveform.Pulse => "DRAG WIDTH / LEVELS · RIGHT = HEIGHT",
+            Waveform.Custom or Waveform.Wavetable => $"{EditorSamples().Length} POINTS · DRAW TO EDIT",
+            _ => "RIGHT HANDLE = HEIGHT · EDIT POINTS BELOW"
+        };
+        _waveHint.LetterSpacing = 0; _waveHint.FontSize = 8;
+    }
+
+    private static void CopyShape(Instrument source, Instrument target)
+    {
+        target.OscillatorAmplitude = source.OscillatorAmplitude; target.TrianglePeak = source.TrianglePeak;
+        target.PulseWidth = source.PulseWidth; target.SquareWidth = source.SquareWidth;
+        target.WaveHigh = source.WaveHigh; target.WaveLow = source.WaveLow;
+    }
+
+    private void ShowShapePreview(Instrument preview)
+    {
+        var wasRefreshing = _refreshing; _refreshing = true;
+        try
+        {
+            foreach (var (control, read) in _numbers)
+                control.SetModelValue(Math.Clamp((decimal)read(preview), control.Minimum, control.Maximum));
+        }
+        finally { _refreshing = wasRefreshing; }
     }
 
     private Control Number(string label, string name, double min, double max, double step,
         Func<Instrument, double> read, Action<Instrument, double> write, string format)
     {
-        var input = new NumericUpDown { Name = name, Minimum = (decimal)min, Maximum = (decimal)max,
+        var input = new EditorNumber { Name = name, Minimum = (decimal)min, Maximum = (decimal)max,
             Increment = (decimal)step, FormatString = format, FontSize = 11, MinHeight = 28,
             Padding = new(6, 3), ShowButtonSpinner = false, HorizontalAlignment = HorizontalAlignment.Stretch };
-        Accessible(input, label, $"{label}. Range {min} to {max}. Use up and down arrows to adjust.");
+        Accessible(input, label, $"{label}. Range {min} to {max}. Enter or leave the field to apply; Escape cancels. Use up and down arrows to adjust.");
         _numbers.Add((input, read));
-        input.ValueChanged += (_, _) =>
+        input.Committed += value =>
         {
-            if (_refreshing || _instrument is null || input.Value is not { } value) return;
+            if (_refreshing || _instrument is null) return;
             var next = (double)value;
             if (Math.Abs(read(_instrument) - next) > .0000001) Edit(i => write(i, next));
         };
@@ -443,161 +498,8 @@ public sealed class InstrumentPanel : UserControl
         AutomationProperties.SetName(control, name); ToolTip.SetTip(control, tip);
     }
 
-    private static short[] Resample(short[] source)
-    {
-        if (source.Length == 0) return ShapeSamples(Waveform.Sine);
-        if (source.Length == 128) return (short[])source.Clone();
-        var result = new short[128];
-        for (var n = 0; n < result.Length; n++)
-        {
-            var position = n * source.Length / 128d;
-            var left = (int)position;
-            result[n] = (short)Math.Clamp(Math.Round(source[left] + (source[(left + 1) % source.Length] - source[left]) * (position - left)), short.MinValue, short.MaxValue);
-        }
-        return result;
-    }
-
-    private static short[] RandomSamples()
-    {
-        var samples = new short[128];
-        for (var n = 0; n < samples.Length; n++) samples[n] = (short)Random.Shared.Next(short.MinValue, short.MaxValue + 1);
-        return samples;
-    }
-
-    private static short[] ShapeSamples(Waveform shape, double pulseWidth = .5, double phase = 0)
-    {
-        var result = new short[128]; uint random = 0x4D555349;
-        for (var n = 0; n < result.Length; n++)
-        {
-            var p = (n / 128d + phase) % 1;
-            random ^= random << 13; random ^= random >> 17; random ^= random << 5;
-            var value = shape switch
-            {
-                Waveform.Triangle => 1 - 4 * Math.Abs(p - .5),
-                Waveform.Saw => 2 * p - 1,
-                Waveform.Square => p < .5 ? 1 : -1,
-                Waveform.Pulse => p < pulseWidth ? 1 : -1,
-                Waveform.Noise => random / (double)uint.MaxValue * 2 - 1,
-                _ => Math.Sin(p * 2 * Math.PI)
-            };
-            result[n] = (short)Math.Clamp(Math.Round(value * 32767), short.MinValue, short.MaxValue);
-        }
-        return result;
-    }
-
-    private sealed class WaveformDisplay : Control
-    {
-        private short[] _samples = ShapeSamples(Waveform.Sine);
-        private short[]? _before;
-        private bool _editable, _drawing;
-        private IPointer? _pointer;
-        private int _selected, _lastIndex;
-        private short _lastValue;
-        public event Action<short[]>? DrawCompleted;
-
-        public void SetSamples(short[] samples, bool editable)
-        {
-            if (_drawing) return;
-            _samples = samples; _editable = editable; Focusable = editable;
-            Cursor = new Cursor(editable ? StandardCursorType.Cross : StandardCursorType.Arrow);
-            InvalidateVisual();
-        }
-        public void CancelGesture()
-        {
-            if (_before is not null) _samples = _before;
-            _before = null; _drawing = false;
-            var pointer = _pointer; _pointer = null; pointer?.Capture(null);
-            InvalidateVisual();
-        }
-        public override void Render(DrawingContext context)
-        {
-            base.Render(context);
-            var box = new Rect(Bounds.Size);
-            context.DrawRectangle(Ui.Surface, new Pen(Ui.Line), box, 5, 5);
-            var inner = box.Deflate(8);
-            if (inner.Width <= 0 || inner.Height <= 0) return;
-            for (var x = 1; x < 8; x++) context.DrawLine(new Pen(Ui.Line, .5),
-                new Point(inner.X + inner.Width * x / 8, inner.Y), new Point(inner.X + inner.Width * x / 8, inner.Bottom));
-            context.DrawLine(new Pen(Ui.Line), new Point(inner.X, inner.Center.Y), new Point(inner.Right, inner.Center.Y));
-            var geometry = new StreamGeometry();
-            using (var path = geometry.Open())
-            {
-                for (var n = 0; n < _samples.Length; n++)
-                {
-                    var point = new Point(inner.X + inner.Width * n / (_samples.Length - 1), inner.Center.Y - _samples[n] / 32768d * inner.Height * .47);
-                    if (n == 0) path.BeginFigure(point, false); else path.LineTo(point);
-                }
-                path.EndFigure(false);
-            }
-            context.DrawGeometry(null, new Pen(Ui.Accent, 1.6), geometry);
-            if (_editable && IsFocused)
-            {
-                var x = inner.X + inner.Width * _selected / 127;
-                var y = inner.Center.Y - _samples[_selected] / 32768d * inner.Height * .47;
-                context.DrawLine(new Pen(Ui.Muted, .5), new(x, inner.Y), new(x, inner.Bottom));
-                context.DrawEllipse(Ui.Accent, null, new Point(x, y), 3, 3);
-            }
-        }
-        protected override void OnPointerPressed(PointerPressedEventArgs e)
-        {
-            base.OnPointerPressed(e);
-            if (!_editable || !e.GetCurrentPoint(this).Properties.IsLeftButtonPressed) return;
-            Focus(); _before = (short[])_samples.Clone(); _drawing = true;
-            (_lastIndex, _lastValue) = SampleAt(e.GetPosition(this));
-            _samples[_lastIndex] = _lastValue; _selected = _lastIndex;
-            _pointer = e.Pointer; e.Pointer.Capture(this); e.Handled = true; InvalidateVisual();
-        }
-        protected override void OnPointerMoved(PointerEventArgs e)
-        {
-            base.OnPointerMoved(e);
-            if (!_drawing) return;
-            var (index, value) = SampleAt(e.GetPosition(this));
-            var start = Math.Min(index, _lastIndex); var end = Math.Max(index, _lastIndex);
-            for (var n = start; n <= end; n++)
-                _samples[n] = index == _lastIndex ? value : (short)Math.Round(_lastValue + (value - _lastValue) * (n - _lastIndex) / (double)(index - _lastIndex));
-            _lastIndex = _selected = index; _lastValue = value;
-            InvalidateVisual(); e.Handled = true;
-        }
-        protected override void OnPointerReleased(PointerReleasedEventArgs e)
-        {
-            base.OnPointerReleased(e);
-            if (!_drawing) return;
-            var changed = _before is not null && !_samples.AsSpan().SequenceEqual(_before);
-            _drawing = false; _before = null; _pointer = null; e.Pointer.Capture(null); e.Handled = true;
-            if (changed) DrawCompleted?.Invoke((short[])_samples.Clone());
-        }
-        protected override void OnPointerCaptureLost(PointerCaptureLostEventArgs e)
-        {
-            base.OnPointerCaptureLost(e);
-            _pointer = null;
-            if (_drawing) CancelGesture();
-        }
-        protected override void OnKeyDown(KeyEventArgs e)
-        {
-            base.OnKeyDown(e);
-            if (!_editable) return;
-            if (e.Key == Key.Escape) { CancelGesture(); e.Handled = true; return; }
-            if (_drawing) return;
-            if (e.Key is Key.Left or Key.Right)
-            {
-                _selected = Math.Clamp(_selected + (e.Key == Key.Left ? -1 : 1), 0, 127);
-                InvalidateVisual(); e.Handled = true;
-            }
-            if (e.Key is Key.Up or Key.Down)
-            {
-                var delta = e.KeyModifiers.HasFlag(KeyModifiers.Shift) ? 4096 : 512;
-                _samples[_selected] = (short)Math.Clamp(_samples[_selected] + (e.Key == Key.Up ? delta : -delta), short.MinValue, short.MaxValue);
-                InvalidateVisual(); DrawCompleted?.Invoke((short[])_samples.Clone()); e.Handled = true;
-            }
-        }
-        private (int Index, short Value) SampleAt(Point p)
-        {
-            var inner = new Rect(Bounds.Size).Deflate(8);
-            var index = (int)Math.Clamp(Math.Round((p.X - inner.X) / Math.Max(1, inner.Width) * 127), 0, 127);
-            var value = (short)Math.Clamp(Math.Round((inner.Center.Y - p.Y) / Math.Max(1, inner.Height * .47) * 32768), short.MinValue, short.MaxValue);
-            return (index, value);
-        }
-    }
+    private static short[] ShapeSamples(Waveform shape)
+        => WaveformShape.Cycle(new Instrument { Waveform = shape });
 
     private sealed class EnvelopeDisplay : Control
     {

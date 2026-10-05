@@ -120,10 +120,14 @@ public sealed class EditorControlTests
             EditorThemes.ThemeChanged -= onThemeChanged;
             EditorThemes.Apply(EditorThemes.Default);
         }
+        WaveformEditorRegressionChecks.Run();
         StartupUiRegressionChecks.Run();
         FxReferencePanelChecks.Run();
         FxReferenceIntegrationChecks.Run();
+        PaneLayoutRegressionChecks.Run();
         PaneKeyboardRegressionChecks.Run();
+        ArrangementIntegrationChecks.Run();
+        EditorFieldFocusRegressionChecks.Run();
         UpdateUiRegressionChecks.Run();
     }
 }

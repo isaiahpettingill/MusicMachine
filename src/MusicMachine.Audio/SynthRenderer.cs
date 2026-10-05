@@ -284,11 +284,15 @@ public sealed class SynthRenderer
         public readonly DrumKind Drum;
         public readonly double PulseWidth, Detune, Phase, Gain, Attack, Decay, Sustain, Release, PitchEnv, PitchTime;
         public readonly double B0, B1, B2, A1, A2, WavetablePosition;
+        public readonly double OscillatorAmplitude, TrianglePeak, SquareWidth, WaveHigh, WaveLow;
         public readonly short[] Custom;
         public readonly short[][] Tables;
         public Sound(Instrument i)
         {
             Waveform = i.Waveform; Drum = i.Drum;
+            OscillatorAmplitude = Safe(i.OscillatorAmplitude, 1, 0, 1);
+            TrianglePeak = Safe(i.TrianglePeak, .5, .01, .99); SquareWidth = Safe(i.SquareWidth, .5, .01, .99);
+            WaveHigh = Safe(i.WaveHigh, 1, -1, 1); WaveLow = Safe(i.WaveLow, -1, -1, 1);
             PulseWidth = Safe(i.PulseWidth, .5, .01, .99); Detune = Safe(i.DetuneCents, 0, -2400, 2400) / 100;
             Phase = Safe(i.Phase, 0, 0, 1); Gain = Db(Safe(i.VolumeDb, -12, -96, 12));
             var a = i.Amplitude ?? new Envelope();
@@ -351,7 +355,7 @@ public sealed class SynthRenderer
             double step = frequency / OutputSampleRate;
             double raw;
             if (s.Drum != DrumKind.None) raw = Drum(s.Drum, frequency);
-            else raw = Oscillator(s, step);
+            else raw = Oscillator(s, step) * s.OscillatorAmplitude;
             _phase += step; _phase -= Math.Floor(_phase);
             double filtered = s.B0 * raw + _z1;
             _z1 = s.B1 * raw - s.A1 * filtered + _z2; _z2 = s.B2 * raw - s.A2 * filtered;
@@ -364,10 +368,10 @@ public sealed class SynthRenderer
         private double Oscillator(Sound s, double dt) => s.Waveform switch
         {
             Waveform.Sine => Math.Sin(2 * Math.PI * _phase),
-            Waveform.Triangle => 1 - 4 * Math.Abs(_phase - .5),
+            Waveform.Triangle => WaveformShape.Triangle(_phase, s.TrianglePeak),
             Waveform.Saw => 2 * _phase - 1 - PolyBlep(_phase, dt),
-            Waveform.Square => Pulse(.5, dt),
-            Waveform.Pulse => Pulse(s.PulseWidth, dt),
+            Waveform.Square => (s.WaveHigh + s.WaveLow) * .5 + Pulse(s.SquareWidth, dt) * (s.WaveHigh - s.WaveLow) * .5,
+            Waveform.Pulse => (s.WaveHigh + s.WaveLow) * .5 + Pulse(s.PulseWidth, dt) * (s.WaveHigh - s.WaveLow) * .5,
             Waveform.Noise => Noise(),
             Waveform.Custom => Wave(s.Custom, _phase),
             Waveform.Wavetable => Table(s, _phase),

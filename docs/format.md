@@ -1,4 +1,4 @@
-# MusicMachine binary formats, version 1
+# MusicMachine binary formats, versions 1 and 2
 
 `.song` and `.instrument` are single CBOR documents, not JSON or ZIP files. Both use an explicit reflection-free `System.Formats.Cbor` codec, suitable for NativeAOT. Song files embed complete instrument definitions, custom waves and wavetable frames. They never depend on a file path or the continued existence of a global preset.
 
@@ -8,7 +8,7 @@
 
 All maps use nonnegative integer field keys. Writers emit keys in ascending order and use definite-length maps, arrays and strings. Re-encoding a known model is byte deterministic, including IEEE-754 double values and list order. This is deterministic application encoding, not a claim of RFC canonical-CBOR shortest-float encoding.
 
-The root kind marker and version, the song's four collection fields, and every instrument/track/pattern ID are required. New optional fields can be introduced in version 1: readers skip unknown keys, including bounded nested values. Unknown fields are not preserved when an older application resaves a file. A change in existing field meaning, enum meaning, or required data requires a new version. Readers reject unsupported root or embedded-instrument versions rather than guessing. Enum numbers below are permanent.
+The root kind marker and version, the song's four collection fields, and every instrument/track/pattern ID are required. Readers skip unknown keys, including bounded nested values. New audible oscillator-shape controls use version 2 so older applications reject these files rather than silently losing their sound. New readers accept both versions. Instruments with all new controls at legacy defaults retain their original 19-field version-1 encoding. Nondefault controls write embedded-instrument and standalone-instrument root version 2; songs containing these controls write root version 2. Loaded version-2 songs stay version 2 even if the controls return to defaults. Unknown fields are not preserved when an older application resaves a file. A change in existing field meaning, enum meaning, or required data requires a new version. Readers reject unsupported root or embedded-instrument versions rather than guessing. Enum numbers below are permanent.
 
 Readers reject malformed/truncated CBOR, duplicate or negative field keys, trailing bytes, indefinite containers, unknown sample encoding, invalid enum values, nonfinite numeric values, broken references, duplicate IDs/track lanes, invalid loop ranges and mismatched pattern row/step counts. Invalid input raises `SongFormatException` with a useful explanation. There is no silent truncation of tracks, notes or waves.
 
@@ -43,7 +43,7 @@ Tempo is 20–400 BPM; rows/beat one of 1, 2, 4, 8 or 16 and beats/bar 1–16; s
 | Key | Value |
 |---:|---|
 | 0 | Text `MusicMachine.song` |
-| 1 | Integer version, currently 1 |
+| 1 | Integer version, 1 or 2 |
 | 2 | Title text |
 | 3 | Author text |
 | 4 | Quarter-note BPM, float64 |
@@ -64,7 +64,7 @@ Tempo is 20–400 BPM; rows/beat one of 1, 2, 4, 8 or 16 and beats/bar 1–16; s
 
 ## Instrument root and embedded instrument
 
-An `.instrument` root has keys `0: "MusicMachine.instrument"`, `1: 1`, `2: embedded instrument map`.
+An `.instrument` root has keys `0: "MusicMachine.instrument"`, `1: version (1 or 2)`, `2: embedded instrument map`.
 
 | Embedded key | Value |
 |---:|---|
@@ -85,8 +85,13 @@ An `.instrument` root has keys `0: "MusicMachine.instrument"`, `1: 1`, `2: embed
 | 14 | Array of waveform byte strings |
 | 15 | Wavetable position, float64, 0–1 |
 | 16 | `IsLocal`, Boolean |
-| 17 | Embedded schema version, integer 1 |
+| 17 | Embedded schema version, integer 1 or 2 |
 | 18 | Sample encoding text `pcm16le` |
+| 19 | Oscillator amplitude, float64 0–1; default 1 |
+| 20 | Triangle peak position, float64 0.01–0.99; default 0.5 |
+| 21 | Square width, float64 0.01–0.99; default 0.5 |
+| 22 | Square/pulse high level, float64 −1…+1; default +1 |
+| 23 | Square/pulse low level, float64 −1…+1; default −1 |
 
 Wave bytes are signed 16-bit little-endian PCM samples, with even byte counts. A custom oscillator needs at least two samples; a wavetable needs at least one frame and every frame needs at least two samples. Wavetable frames can have different lengths. Wave samples describe one periodic cycle; they are not external audio samples. Envelope times are 0–60,000 ms, sustain 0–1.
 
@@ -95,6 +100,16 @@ Stable waveform values: `0 Sine`, `1 Triangle`, `2 Saw`, `3 Square`, `4 Pulse`, 
 Stable drum values: `0 None`, `1 Kick`, `2 Snare`, `3 ClosedHat`, `4 OpenHat`, `5 Tom`, `6 Clap`.
 
 Factory presets are freshly allocated by `InstrumentLibrary.CreatePresets()`. `CreateLocalCopy()` round-trips the binary codec, issues a new ID, and marks the copy local. Neither parameter edits nor waveform-array edits to a local instrument can modify a global preset or another song. `ImportToSong()` adds such an independent copy. The `IsLocal` flag is a UI provenance hint; every song embeds every definition regardless of this flag.
+
+## Editable oscillator shapes
+
+Oscillator amplitude is a linear height multiplier applied before the filter, amplitude ADSR and output dB. It affects every melodic oscillator, including custom samples and wavetable interpolation, and does not change synthesized drum engines. Values are never normalized back to one. Shape changes, imports, sample edits, local copies and undo preserve amplitude. High/low levels are signed sample levels multiplied by oscillator amplitude; they may cross, intentionally producing an inverted pulse. Square width is separate from pulse width so old square instruments retain a 50% duty cycle even if their dormant pulse-width setting differs.
+
+The editor shows the phase-zero, unfiltered cycle. Initial phase remains a separate playback parameter. The right-edge handle controls amplitude, the triangle peak controls position and height, and square/pulse handles control duty cycle and both levels. During dragging only the local graph and number previews change; release commits once, while Escape, capture loss, switching sounds or replacing the model snapshot cancels. Point editing preserves a loaded frame's actual sample count and amplitude. At zero amplitude, point edits change the underlying stored samples while playback remains silent; use the always-visible amplitude rail to restore height.
+
+**Edit points** converts any periodic preset into a 128-point custom cycle without baking amplitude or phase twice. Continuous Noise deliberately becomes a repeatable loop using fixed seed `0x4D555349`; this is a timbre conversion, not a promise to preserve the stochastic source. Custom curves use linear interpolation; converting a band-limited square/pulse/saw to points can alter its high-frequency spectrum. Selecting Custom/Wavetable for the first time seeds its data from the current cycle; later selection restores its stored data. Wavetable editing changes only the selected frame, independently of the audible morph position. New preset/frame commands create explicitly requested unit-height sample data but retain the instrument's oscillator-amplitude multiplier. No sample-edit operation peak-normalizes stored data.
+
+Version-1 instruments default to amplitude 1, centered triangle, 50% square and levels +1/−1, preserving their historical audio. Files using nondefault new controls require the new application; older readers reject their version-2 marker. Realtime playback and offline export share the same renderer and parameter snapshot.
 
 ## Sampling extraction
 

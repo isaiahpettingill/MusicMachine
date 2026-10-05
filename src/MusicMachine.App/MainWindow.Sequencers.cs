@@ -17,128 +17,6 @@ public sealed partial class MainView
     private DrumGrid? drumGridSurface;
     private Vector drumScrollOffset;
 
-    private Control BuildArrangement()
-    {
-        var song = editor.Song;
-        selectedSection = Math.Clamp(selectedSection, 0, song.Arrangement.Count - 1);
-        var body = new StackPanel { Spacing = 12, Margin = new(14, 4, 14, 16) };
-        var totalRows = song.Arrangement.Sum(s => song.FindPattern(s.PatternId)!.Length * s.Repeats);
-        var totalBeats = totalRows / (double)song.RowsPerBeat;
-        var summary = new Grid { ColumnDefinitions = new("*,Auto") };
-        var heading = new StackPanel { Spacing = 4 };
-        heading.Children.Add(Ui.Label("Arrangement", 14));
-        heading.Children.Add(Ui.Label($"{song.Arrangement.Count} sections  ·  {totalBeats / (song.BeatsPerBar * 4.0 / song.BeatUnit):0.#} bars  ·  {totalBeats * 60 / song.Bpm:0.0} seconds", 11, Ui.Muted));
-        summary.Children.Add(heading);
-        var append = Ui.IconButton(PackIconMaterialKind.Plus, () =>
-        {
-            var id = activePattern;
-            selectedSection = editor.Song.Arrangement.Count;
-            Change(s => { var extendLoop = s.LoopEndSection == s.Arrangement.Count; s.Arrangement.Add(new() { PatternId = id }); if (extendLoop) s.LoopEndSection++; });
-            SetStatus("Pattern appended · edits to a library pattern update every instance");
-        }, "Append the selected library pattern to the song", true);
-        append.IsEnabled = song.Arrangement.Count < SongLimits.MaxSections;
-        Grid.SetColumn(append, 1); summary.Children.Add(append); body.Children.Add(summary);
-
-        var timeline = new ArrangementCanvas(song, selectedSection, chosenTrack);
-        timeline.SectionSelected += (section, track) =>
-        {
-            selectedSection = section; activePattern = editor.Song.Arrangement[section].PatternId;
-            if (track >= 0) { chosenTrack = track; selectedInstrument = editor.Song.Tracks[track].InstrumentId; }
-            Refresh();
-        };
-        body.Children.Add(timeline);
-
-        var section = song.Arrangement[selectedSection];
-        var pattern = song.FindPattern(section.PatternId)!;
-        var sectionTop = new Grid { ColumnDefinitions = new("*,Auto") };
-        sectionTop.Children.Add(Ui.Label($"SECTION {selectedSection + 1:00}  ·  {pattern.Name}", 11, Ui.Accent));
-        var moveLeft = Ui.IconButton(PackIconMaterialKind.ArrowLeft, () => MoveSection(-1), "Move selected section earlier"); moveLeft.IsEnabled = selectedSection > 0;
-        var moveRight = Ui.IconButton(PackIconMaterialKind.ArrowRight, () => MoveSection(1), "Move selected section later"); moveRight.IsEnabled = selectedSection < song.Arrangement.Count - 1;
-        var remove = Ui.IconButton(PackIconMaterialKind.DeleteOutline, RemoveSection, "Remove this instance; keep the reusable library pattern"); remove.IsEnabled = song.Arrangement.Count > 1;
-        var order = Ui.Row(moveLeft, moveRight, remove); Grid.SetColumn(order, 1); sectionTop.Children.Add(order);
-        var sectionBox = new StackPanel { Spacing = 9 }; sectionBox.Children.Add(sectionTop);
-        var sectionIndex = selectedSection;
-        var repeat = Number(section.Repeats, 1, 128, 1, 74, v => Change(s => s.Arrangement[sectionIndex].Repeats = (int)v));
-        var transpose = Number(section.Transpose, -48, 48, 1, 74, v => Change(s => s.Arrangement[sectionIndex].Transpose = (int)v));
-        var loopLabels = song.Arrangement.Select((s, i) => $"{i + 1:00} · {song.FindPattern(s.PatternId)!.Name}").ToArray();
-        var loopStart = new ComboBox { ItemsSource = loopLabels, SelectedIndex = song.LoopStartSection, Width = 125, FontSize = 11 };
-        var loopEnd = new ComboBox { ItemsSource = loopLabels, SelectedIndex = song.LoopEndSection - 1, Width = 125, FontSize = 11 };
-        loopStart.SelectionChanged += (_, _) => { if (loopStart.SelectedIndex >= 0 && loopStart.SelectedIndex != song.LoopStartSection) Change(s => { s.LoopStartSection = loopStart.SelectedIndex; s.LoopEndSection = Math.Max(s.LoopEndSection, s.LoopStartSection + 1); }); };
-        loopEnd.SelectionChanged += (_, _) => { if (loopEnd.SelectedIndex >= 0 && loopEnd.SelectedIndex + 1 != song.LoopEndSection) Change(s => { s.LoopEndSection = loopEnd.SelectedIndex + 1; s.LoopStartSection = Math.Min(s.LoopStartSection, s.LoopEndSection - 1); }); };
-        ToolTip.SetTip(loopStart, "Loop starts at the beginning of this section"); ToolTip.SetTip(loopEnd, "Loop ends after this section");
-        var settings = new WrapPanel { Orientation = Orientation.Horizontal };
-        foreach (var item in new Control[] { Field("REPEAT", repeat), Field("TRANSPOSE", transpose), Field("LOOP START", loopStart), Field("LOOP THROUGH", loopEnd) }) { item.Margin = new(0, 0, 10, 0); settings.Children.Add(item); }
-        sectionBox.Children.Add(settings); body.Children.Add(SequencerPanel(sectionBox));
-
-        var mixer = new StackPanel { Spacing = 5 };
-        var mixTop = new Grid { ColumnDefinitions = new("*,Auto") }; mixTop.Children.Add(Ui.Heading("TRACK MIXER"));
-        var trim = Ui.Row(Ui.Label("MIX TRIM", 9, Ui.Muted), Ui.IconButton(PackIconMaterialKind.Minus, () => TrimMix(-1), "Lower all track and drum-lane gains equally; retain the mix balance"), Ui.IconButton(PackIconMaterialKind.Plus, () => TrimMix(1), "Raise all track and drum-lane gains equally; retain the mix balance"));
-        Grid.SetColumn(trim, 1); mixTop.Children.Add(trim); mixer.Children.Add(mixTop);
-        var labels = new Grid { ColumnDefinitions = new("28,*,144,79,79,34,34"), Margin = new(0, 2) };
-        string[] captions = ["", "TRACK", "DEFAULT SOUND", "GAIN dB", "PAN", "M", "S"];
-        for (var i = 0; i < captions.Length; i++) { var label = Ui.Label(captions[i], 9, Ui.Muted); label.Margin = new(3, 0); Grid.SetColumn(label, i); labels.Children.Add(label); }
-        mixer.Children.Add(labels);
-        for (var i = 0; i < song.Tracks.Count; i++)
-        {
-            var index = i; var track = song.Tracks[i]; var id = track.Id;
-            var row = new Grid { ColumnDefinitions = new("28,*,144,79,79,34,34"), Height = 37 };
-            var choose = Ui.Button($"{i + 1:00}", () => { chosenTrack = index; selectedInstrument = track.InstrumentId; Refresh(); }, $"Edit {track.Name} automation and instrument");
-            choose.Padding = new(2); choose.FontSize = 10; choose.Foreground = Ui.ThemeBrush(track.Color);
-            if (i == chosenTrack) choose.Classes.Add("selected"); row.Children.Add(choose);
-            var name = new TextBox { Text = track.Name, FontSize = 11, Margin = new(3, 0), Padding = new(6, 5), MaxLength = 128 };
-            name.LostFocus += (_, _) => { if (!string.IsNullOrWhiteSpace(name.Text) && name.Text != track.Name) Change(s => s.Tracks.First(t => t.Id == id).Name = name.Text.Trim()); };
-            name.KeyDown += (_, e) => { if (e.Key == Key.Enter) { choose.Focus(); e.Handled = true; } };
-            Grid.SetColumn(name, 1); row.Children.Add(name);
-            var sounds = new ComboBox { ItemsSource = song.Instruments.Select(x => x.Name).ToArray(), SelectedIndex = song.Instruments.FindIndex(x => x.Id == track.InstrumentId), FontSize = 11, Margin = new(3, 0), Padding = new(6, 5), HorizontalAlignment = HorizontalAlignment.Stretch };
-            sounds.SelectionChanged += (_, _) => { if (sounds.SelectedIndex >= 0 && song.Instruments[sounds.SelectedIndex].Id != track.InstrumentId) { var soundId = song.Instruments[sounds.SelectedIndex].Id; selectedInstrument = soundId; chosenTrack = index; Change(s => s.Tracks.First(t => t.Id == id).InstrumentId = soundId); } };
-            Grid.SetColumn(sounds, 2); row.Children.Add(sounds);
-            var gain = Number(track.VolumeDb, -96, 12, 1, 73, v => Change(s => s.Tracks.First(t => t.Id == id).VolumeDb = v)); gain.Margin = new(3, 0); Grid.SetColumn(gain, 3); row.Children.Add(gain);
-            var pan = Number(track.Pan, -1, 1, .1, 73, v => Change(s => s.Tracks.First(t => t.Id == id).Pan = v), "0.0"); pan.Margin = new(3, 0); Grid.SetColumn(pan, 4); row.Children.Add(pan); ToolTip.SetTip(pan, "Pan: −1 left · 0 center · +1 right");
-            var mute = Ui.IconButton(track.Muted ? PackIconMaterialKind.VolumeOff : PackIconMaterialKind.VolumeHigh, () => Change(s => s.Tracks.First(t => t.Id == id).Muted = !track.Muted), $"{(track.Muted ? "Unmute" : "Mute")} {track.Name}"); mute.Padding = new(6); mute.Margin = new(2, 0); if (track.Muted) mute.Classes.Add("selected"); Grid.SetColumn(mute, 5); row.Children.Add(mute);
-            var solo = Ui.IconButton(PackIconMaterialKind.Headphones, () => Change(s => s.Tracks.First(t => t.Id == id).Solo = !track.Solo), $"{(track.Solo ? "Unsolo" : "Solo")} {track.Name}"); solo.Padding = new(6); solo.Margin = new(2, 0); if (track.Solo) solo.Classes.Add("selected"); Grid.SetColumn(solo, 6); row.Children.Add(solo);
-            mixer.Children.Add(row);
-        }
-        if (song.Tracks.Count == 0) mixer.Children.Add(Ui.Button("+ Add melodic track", AddTrack));
-        body.Children.Add(SequencerPanel(mixer));
-
-        if (song.Tracks.Count > 0)
-        {
-            var track = song.Tracks[chosenTrack]; var id = track.Id;
-            var automation = new StackPanel { Spacing = 6 };
-            var autoTop = new Grid { ColumnDefinitions = new("*,Auto") };
-            autoTop.Children.Add(Ui.Label($"{track.Name}  /  Volume automation", 12, Ui.ThemeBrush(track.Color)));
-            var reset = Ui.IconButton(PackIconMaterialKind.Eraser, () => Change(s => s.Tracks.First(t => t.Id == id).VolumeAutomation.Clear()), "Clear this track's song-wide volume automation"); reset.IsEnabled = track.VolumeAutomation.Count > 0;
-            Grid.SetColumn(reset, 1); autoTop.Children.Add(reset); automation.Children.Add(autoTop);
-            automation.Children.Add(Ui.Label("Click to add · drag to shape · right-click to remove · absolute song rows", 10, Ui.Muted));
-            var canvas = new AutomationCanvas(song, track, totalRows);
-            canvas.Commit += points => { Change(s => s.Tracks.First(t => t.Id == id).VolumeAutomation = points); SetStatus($"{track.Name} volume automation updated"); };
-            canvas.Status += SetStatus; automation.Children.Add(canvas); body.Children.Add(SequencerPanel(automation));
-        }
-        return new ScrollViewer { Content = body, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
-    }
-
-    private void MoveSection(int delta)
-    {
-        var from = selectedSection; var to = from + delta;
-        if (to < 0 || to >= editor.Song.Arrangement.Count) return;
-        selectedSection = to;
-        Change(s => (s.Arrangement[from], s.Arrangement[to]) = (s.Arrangement[to], s.Arrangement[from]));
-    }
-
-    private void RemoveSection()
-    {
-        if (editor.Song.Arrangement.Count <= 1) { SetStatus("Keep at least one section in the arrangement"); return; }
-        var index = selectedSection;
-        Change(s =>
-        {
-            s.Arrangement.RemoveAt(index);
-            if (index < s.LoopStartSection) s.LoopStartSection--;
-            if (index < s.LoopEndSection) s.LoopEndSection--;
-            s.LoopStartSection = Math.Clamp(s.LoopStartSection, 0, s.Arrangement.Count - 1);
-            s.LoopEndSection = Math.Clamp(s.LoopEndSection, s.LoopStartSection + 1, s.Arrangement.Count);
-        });
-    }
-
     private void TrimMix(double requested)
     {
         var song = editor.Song;
@@ -258,19 +136,9 @@ public sealed partial class MainView
 
     private NumericUpDown Number(double value, double min, double max, double increment, double width, Action<double> changed, string format = "0.#")
     {
-        var control = new NumericUpDown { Minimum = (decimal)min, Maximum = (decimal)max, Increment = (decimal)increment, Value = (decimal)value, Width = width, FormatString = format, FontSize = 11, Padding = new(5, 4) };
-        var committed = value;
-        void CommitValue()
-        {
-            if (refreshing || control.Value is not { } v || Math.Abs((double)v - committed) < .00001) return;
-            committed = (double)v; changed(committed);
-        }
-        // Preserve multi-digit typing. A spinner click, Enter, or focus loss commits one edit.
-        control.ValueChanged += (_, _) => { if (refreshing && control.Value is { } v) committed = (double)v; else if (!control.IsKeyboardFocusWithin) CommitValue(); };
-        control.LostFocus += (_, _) => { if (!control.IsKeyboardFocusWithin) CommitValue(); };
-        control.PointerReleased += (_, _) => CommitValue();
-        control.KeyDown += (_, e) => { if (e.Key == Key.Enter) { CommitValue(); e.Handled = true; } };
-        control.KeyUp += (_, e) => { if (e.Key is Key.Up or Key.Down) CommitValue(); };
+        var control = new EditorNumber { Minimum = (decimal)min, Maximum = (decimal)max, Increment = (decimal)increment, Width = width, FormatString = format, FontSize = 11, Padding = new(5, 4) };
+        control.SetModelValue((decimal)value);
+        control.Committed += next => { if (!refreshing) changed((double)next); };
         return control;
     }
     private static StackPanel Field(string label, Control editor) { var panel = Ui.Row(Ui.Label(label, 9, Ui.Muted), editor); return panel; }
@@ -293,7 +161,7 @@ internal sealed class ArrangementCanvas : Control
         this.song = song; this.selected = selected; this.selectedTrack = selectedTrack;
         starts = new double[song.Arrangement.Count + 1];
         for (var i = 0; i < song.Arrangement.Count; i++) starts[i + 1] = starts[i] + song.FindPattern(song.Arrangement[i].PatternId)!.Length * song.Arrangement[i].Repeats;
-        Height = Header + Math.Max(1, song.Tracks.Count) * TrackHeight + 13; MinWidth = 420; ClipToBounds = true; Cursor = new(StandardCursorType.Hand);
+        Height = Header + Math.Max(1, song.Tracks.Count) * TrackHeight + 13; MinWidth = 260; ClipToBounds = true; Cursor = new(StandardCursorType.Hand);
         Avalonia.Automation.AutomationProperties.SetName(this, "Song arrangement overview. Click a section or track to select it.");
     }
     public override void Render(DrawingContext ctx)
@@ -402,7 +270,7 @@ internal sealed class AutomationCanvas : Control
     public AutomationCanvas(Song song, MusicMachine.Core.Track track, int totalRows)
     {
         this.song = song; this.totalRows = totalRows; points = track.VolumeAutomation.Select(p => new AutomationPoint { Row = p.Row, Decibels = p.Decibels }).ToList(); color = Ui.ThemeBrush(track.Color);
-        Height = 173; MinWidth = 350; ClipToBounds = true; Focusable = true; Cursor = new(StandardCursorType.Cross);
+        Height = 173; MinWidth = 240; ClipToBounds = true; Focusable = true; Cursor = new(StandardCursorType.Cross);
         Avalonia.Automation.AutomationProperties.SetName(this, $"{track.Name} volume automation. Click to add, drag to move, right click to remove. Range minus 60 to plus 12 decibels.");
     }
     public override void Render(DrawingContext ctx)

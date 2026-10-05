@@ -30,18 +30,23 @@ public sealed partial class MainView
             if (refreshing || inspectorPicker.SelectedIndex < 0) return;
             var requested = inspectorPicker.SelectedIndex == 1 ? "fx" : "instrument";
             if (requested == viewSettings.InspectorContent) return;
-            if (!tracker.CommitPending()) { UpdateReferenceContext(); RestoreInputFocus(); return; }
+            // Help and inspector navigation remain available even while a cell needs correction.
+            // Commit valid drafts, but leave a rejected draft in place for repair or cancellation.
+            tracker.CommitPending();
             viewSettings.InspectorContent = requested;
             SaveViewSettings(); Refresh();
             if (ShowingFxReference) Dispatcher.UIThread.Post(() => fxReferencePanel?.FocusSearch(), DispatcherPriority.Background);
         };
         body.Children.Add(inspectorPicker); Grid.SetRow(inspectorHost, 1); body.Children.Add(inspectorHost);
         tracker.SelectionChanged += (_, _) => UpdateReferenceContext();
+        tracker.EditChanged += UpdateReferenceContext;
         KeyDown += (_, e) =>
         {
             if (e.Handled || OverlayRoot.Children.Count > 1) return;
             var ctrl = e.KeyModifiers.HasFlag(KeyModifiers.Control) || e.KeyModifiers.HasFlag(KeyModifiers.Meta);
             if (e.Key == Key.F2 && !ctrl) { ShowFxReference(); e.Handled = true; }
+            else if (e.Key == Key.Escape && tracker.HasPendingEdit && fxReferencePanel?.IsKeyboardFocusWithin == true)
+            { tracker.CancelPendingEdit(); RestoreInputFocus(); e.Handled = true; }
             else if (ctrl && e.KeyModifiers.HasFlag(KeyModifiers.Shift) && e.Key == Key.D)
             { _ = LoadDemo(); e.Handled = true; }
         };
@@ -50,7 +55,7 @@ public sealed partial class MainView
 
     private void ShowFxReference()
     {
-        if (!tracker.CommitPending()) return;
+        tracker.CommitPending();
         viewSettings.InspectorContent = "fx"; viewSettings.Inspector = true;
         SaveViewSettings(); Refresh();
         Dispatcher.UIThread.Post(() => fxReferencePanel?.FocusSearch(), DispatcherPriority.Background);
@@ -64,16 +69,25 @@ public sealed partial class MainView
         var track = editor.Song.Tracks.ElementAtOrDefault(tracker.SelectedTrack);
         var pattern = editor.Song.FindPattern(activePattern);
         bool enabled = mode == "Tracker" && track is not null && pattern is not null && tracker.SelectedRow < pattern.Length;
-        fxReferencePanel.SetContext(enabled
+        var context = enabled
             ? $"{track!.Name} · row {tracker.SelectedRow + 1:00} · {(tracker.SelectedColumn == 0 ? "same-row FX" : "FX " + tracker.SelectedColumn)}"
-            : "Select a tracker cell to insert an effect", enabled);
+            : "Select a tracker cell to insert an effect";
+        if (enabled && tracker.HasPendingEdit)
+        {
+            if (tracker.SelectedColumn > 0) context += $" · Insert replaces unfinished \u201c{tracker.EditText}\u201d; Esc cancels it";
+            else if (tracker.EditError is not null)
+            { context += " · Fix the note or press Esc before inserting FX"; enabled = false; }
+        }
+        fxReferencePanel.SetContext(context, enabled);
     }
 
     private void InsertReferenceEffect(string code)
     {
         if (mode != "Tracker") { SetStatus("Choose a tracker cell before inserting an effect"); return; }
-        if (!tracker.CommitPending()) { RestoreInputFocus(); return; }
         if (!FxParser.TryParse(code, out var effect, out var error) || effect.IsEmpty) { SetStatus(error.Length > 0 ? error : "Choose an effect first"); return; }
+        // An explicit Insert replaces the selected FX draft. A note draft must be saved
+        // first so using the reference can never silently drop or overwrite its pitch.
+        if (tracker.SelectedColumn == 0 && !tracker.CommitPending()) { RestoreInputFocus(); return; }
         int row = tracker.SelectedRow, track = tracker.SelectedTrack, selectedColumn = tracker.SelectedColumn;
         var trackId = editor.Song.Tracks.ElementAtOrDefault(track)?.Id;
         var note = trackId is null ? null : editor.Song.FindPattern(activePattern)?.Tracks.FirstOrDefault(t => t.TrackId == trackId)?.Rows.ElementAtOrDefault(row);
@@ -89,8 +103,11 @@ public sealed partial class MainView
         }
         if (column >= FxParser.MaxColumns) { SetStatus("This row has no free FX column. Select an effect cell to replace it."); return; }
         var previousColumns = tracker.EffectColumns;
-        tracker.EffectColumns = Math.Max(previousColumns, column + 1);
-        tracker.SetSong(editor.Song, activePattern); tracker.Select(row, track, column + 1);
+        if (selectedColumn == 0)
+        {
+            tracker.EffectColumns = Math.Max(previousColumns, column + 1);
+            tracker.SetSong(editor.Song, activePattern); tracker.Select(row, track, column + 1);
+        }
         if (tracker.CommitText(effect.ToString()))
         {
             // Keep the insertion point; Enter is the user's explicit move to the next row.
