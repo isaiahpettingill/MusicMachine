@@ -21,8 +21,62 @@ VERSION = module("ci-version.py")
 MANIFEST = module("release-manifest.py")
 INSTALLER = module("package-linux-installer.py")
 DESKTOP = module("prepare-desktop.py")
+WINDOWS_GUI = module("test-windows-gui.py")
 
 class ReleaseTests(unittest.TestCase):
+    def test_windows_gui_png_preserves_color_and_dimensions(self):
+        import struct
+        import zlib
+        with tempfile.TemporaryDirectory() as temp:
+            output = Path(temp) / "native.png"
+            WINDOWS_GUI.write_png(output, 2, 1, bytes((0, 0, 255, 0, 0, 255, 0, 0)))
+            data = output.read_bytes()
+            self.assertEqual(data[:8], b"\x89PNG\r\n\x1a\n")
+            position, chunks = 8, {}
+            while position < len(data):
+                size = struct.unpack(">I", data[position:position + 4])[0]
+                kind = data[position + 4:position + 8]
+                content = data[position + 8:position + 8 + size]
+                checksum = struct.unpack(">I", data[position + 8 + size:position + 12 + size])[0]
+                self.assertEqual(checksum, zlib.crc32(kind + content) & 0xffffffff)
+                chunks[kind] = content
+                position += size + 12
+            self.assertEqual(struct.unpack(">II", chunks[b"IHDR"][:8]), (2, 1))
+            self.assertEqual(zlib.decompress(chunks[b"IDAT"]), bytes((0, 255, 0, 0, 0, 255, 0)))
+            for width, height, pixels in ((0, 1, b""), (1, -1, b""), (1, 1, b"bad")):
+                with self.assertRaises(ValueError):
+                    WINDOWS_GUI.write_png(output, width, height, pixels)
+
+    def test_windows_gui_compares_only_visible_pixels(self):
+        before = bytes((0, 0, 255, 0, 0, 255, 0, 0))
+        alpha_only = bytes((0, 0, 255, 255, 0, 255, 0, 255))
+        changed = bytes((0, 0, 0, 0, 0, 255, 0, 0))
+        self.assertEqual(WINDOWS_GUI.color_count(before), 2)
+        self.assertEqual(WINDOWS_GUI.changed_pixels(before, alpha_only), 0)
+        self.assertEqual(WINDOWS_GUI.changed_pixels(before, changed), 1)
+        with self.assertRaises(ValueError):
+            WINDOWS_GUI.changed_pixels(before, b"")
+
+    def test_windows_gui_smoke_refuses_non_windows(self):
+        with patch.object(WINDOWS_GUI.sys, "platform", "linux"):
+            with self.assertRaisesRegex(RuntimeError, "no GUI was tested"):
+                WINDOWS_GUI.run(Path("unused"), Path("unused"))
+
+    def test_windows_gui_smoke_is_required_before_installer_test_and_not_released(self):
+        workflow = (TOOLS.parent / ".github/workflows/build.yml").read_text()
+        self.assertLess(workflow.index("python tools/test-windows-gui.py"), workflow.index("python tools/test-windows-installer.py"))
+        self.assertIn("name: windows-gui-smoke", workflow)
+        release = workflow.split("  release:\n", 1)[1]
+        self.assertNotIn("name: windows-gui-smoke", release)
+
+    def test_windows_installer_guard_does_not_manufacture_token_properties(self):
+        script = (TOOLS / "test-windows-installer.py").read_text()
+        self.assertIn("if elevated or integrity > 0x2000:", script)
+        self.assertIn("No real install was verified", script)
+        self.assertNotIn("SetTokenInformation", script)
+        self.assertNotIn("AdjustTokenPrivileges", script)
+        self.assertNotIn("CreateRestrictedToken", script)
+
     def test_first_release(self):
         self.assertEqual(VERSION.choose_version("0.1.0", "abc", "refs/heads/main", "push", [], {}), ("0.1.0", True))
 
@@ -61,6 +115,13 @@ class ReleaseTests(unittest.TestCase):
         for step in downloads:
             self.assertTrue("pattern:" in step or "name: browser-wasm" in step)
             self.assertNotIn("browser-app-smoke", step)
+            self.assertNotIn("browser-candidate-diagnostics", step)
+            self.assertNotIn("windows-gui-smoke", step)
+        candidate = workflow.split("      - name: Retain failed browser candidate for diagnosis only\n", 1)[1].split("      - uses:", 1)[0]
+        self.assertIn("if: failure()", candidate)
+        self.assertIn("name: browser-candidate-diagnostics", candidate)
+        pages = (TOOLS.parent / ".github/workflows/pages.yml").read_text()
+        self.assertNotIn("browser-candidate-diagnostics", pages)
 
     def test_version_validation(self):
         for value in ("1.0", "../test", "1.2.3-rc1"):

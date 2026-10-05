@@ -4,4 +4,6 @@
   <ItemGroup><ProjectReference Include="../../src/MusicMachine.Core/MusicMachine.Core.csproj"/><ProjectReference Include="../../src/MusicMachine.Audio/MusicMachine.Audio.csproj"/></ItemGroup>
   <ItemGroup><Using Include="Xunit"/></ItemGroup>
   <ItemGroup><None Include="../../tools/install-linux.sh" Link="install-linux.sh" CopyToOutputDirectory="PreserveNewest"/></ItemGroup>
-<ItemGroup><ProjectReference Include="../../src/MusicMachine.App/MusicMachine.App.csproj"/></ItemGroup></Project>
+<ItemGroup><ProjectReference Include="../../src/MusicMachine.App/MusicMachine.App.csproj"/></ItemGroup>
+  <ItemGroup><ProjectReference Include="../../src/MusicMachine.Desktop/MusicMachine.Desktop.csproj"/></ItemGroup>
+</Project>

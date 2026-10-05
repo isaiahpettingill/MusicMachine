@@ -90,6 +90,16 @@ jobs:
         run: python tools/prepare-desktop.py artifacts/${{ matrix.rid }} ${{ matrix.rid }}
       - name: Smoke-test native audio export
         run: python tools/test-native-payload.py artifacts/${{ matrix.rid }}
+      - name: Smoke-test actual Windows NativeAOT GUI
+        if: runner.os == 'Windows'
+        run: python tools/test-windows-gui.py artifacts/win-x64 artifacts/windows-gui-smoke
+      - name: Retain Windows GUI screenshots and diagnostics
+        if: always() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-gui-smoke
+          path: artifacts/windows-gui-smoke
+          if-no-files-found: warn
       - name: Test native Linux updater helper with disposable installs
         if: runner.os == 'Linux'
         run: python3 tools/test-updater-helper.py artifacts/linux-x64/MusicMachine.Desktop
@@ -177,6 +187,15 @@ jobs:
           name: browser-app-smoke
           path: artifacts/browser-app-smoke
           if-no-files-found: warn
+      - name: Retain failed browser candidate for diagnosis only
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-candidate-diagnostics
+          path: |
+            artifacts/MusicMachine-pages.zip
+            MusicMachine-browser-wasm.zip
+          if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
         with:
           name: browser-wasm

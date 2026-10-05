@@ -2,6 +2,7 @@ using Avalonia;
 using MusicMachine.Core;
 using MusicMachine.Audio;
 using MusicMachine.App.Updating;
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("MusicMachine.Tests")]
 namespace MusicMachine.Desktop;
 internal static class Program
 {
@@ -34,5 +35,15 @@ internal static class Program
         }
         catch (Exception e) { Console.Error.WriteLine(e.Message); return 1; }
     }
-    public static AppBuilder BuildAvaloniaApp() => AppBuilder.Configure<MusicMachine.App.App>().UsePlatformDetect().With(new X11PlatformOptions { WmClass = "MusicMachine" }).WithInterFont().LogToTrace();
+    internal static Win32PlatformOptions WindowsOptions() => new()
+    {
+        // Avalonia 12.1.3's DirectComposition COM callbacks have non-blittable
+        // Boolean signatures under .NET 11 NativeAOT. Its supported redirection
+        // surface avoids those paths; retain ANGLE with a software fallback.
+        CompositionMode = [Win32CompositionMode.RedirectionSurface],
+        RenderingMode = [Win32RenderingMode.AngleEgl, Win32RenderingMode.Software]
+    };
+    public static AppBuilder BuildAvaloniaApp() => AppBuilder.Configure<MusicMachine.App.App>()
+        .UsePlatformDetect().With(WindowsOptions())
+        .With(new X11PlatformOptions { WmClass = "MusicMachine" }).WithInterFont().LogToTrace();
 }

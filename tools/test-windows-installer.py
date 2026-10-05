@@ -105,10 +105,14 @@ def run_with_test_user_token():
     """Test-only re-exec; every token property is checked, no bypass or skip."""
     token, source = get_test_user_token()
     try:
-        if token_is_elevated(token) or token_integrity_rid(token) > 0x2000:
+        elevated, integrity = token_is_elevated(token), token_integrity_rid(token)
+        print(f"Windows test token: source={source}, elevated={elevated}, integrity=0x{integrity:04x}", flush=True)
+        if elevated or integrity > 0x2000:
             raise RuntimeError(f"WINDOWS INSTALLER VERIFICATION BLOCKED: {source} token "
-                               "is elevated or above medium integrity; use a standard-user "
-                               "runner. No real install was verified.")
+                               f"has elevation={elevated}, integrity=0x{integrity:04x}; a genuine "
+                               "standard-user Windows runner/session is required. GitHub-hosted "
+                               "Windows runs as administrator with UAC disabled. No token properties, "
+                               "accounts or security policy were changed. No real install was verified.")
         class StartupInfo(ctypes.Structure):
             _fields_ = [("cb", wintypes.DWORD), ("lpReserved", wintypes.LPWSTR),
                         ("lpDesktop", wintypes.LPWSTR), ("lpTitle", wintypes.LPWSTR),
