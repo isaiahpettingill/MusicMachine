@@ -1,0 +1,5 @@
+# Required install hooks for the exact Wrangler toolchain locked in pnpm-lock.yaml.
+# All other dependency build scripts remain unapproved by default.
+allowBuilds:
+  esbuild@0.28.1: true
+  workerd@1.20260923.1: true
