@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: 0BSD
 set -euo pipefail
+# Keep newly created parents and extracted payloads eligible for the updater,
+# regardless of the caller's umask. This changes only this installer process.
+umask 022
 
 # Filled by the Linux release job. Source checkouts support --archive.
 RELEASE_REPOSITORY='@REPOSITORY@'
@@ -55,7 +58,7 @@ icon="$data_home/icons/hicolor/scalable/apps/io.github.isaiahpettingill.MusicMac
 marker='MusicMachine per-user installation v1'
 [[ ! -L "$root" ]] || die "Installation directory is a symlink: $root"
 if [[ -e "$root" ]]; then
-    [[ -f "$root/.installer-owned" && $(cat "$root/.installer-owned") == "$marker" ]] || die "Refusing to replace an unmanaged directory: $root"
+    [[ -d "$root" && -O "$root" && ! -L "$root/.installer-owned" && -f "$root/.installer-owned" && -O "$root/.installer-owned" && $(cat "$root/.installer-owned") == "$marker" ]] || die "Refusing to replace an unmanaged directory: $root"
 fi
 
 destinations=("$bin_home/musicmachine" "$bin_home/musicmachine-uninstall" "$desktop" "$icon")
@@ -94,7 +97,28 @@ if "$uninstall"; then
     exit 0
 fi
 [[ $(uname -m) == x86_64 ]] || die 'This release provides Linux x64 only.'
-for tool in tar sha256sum mktemp install readlink; do command -v "$tool" >/dev/null || die "Required command not found: $tool"; done
+for tool in tar sha256sum mktemp install readlink stat chmod; do command -v "$tool" >/dev/null || die "Required command not found: $tool"; done
+# Never repair permissions on HOME, XDG_DATA_HOME, or their shared parents.
+# Match UpdatePaths' writable-ancestor rule, including root-owned sticky /tmp.
+check_installation_parents() {
+    local parent="$data_home" permissions mode owner
+    while :; do
+        if [[ -e "$parent" ]]; then
+            [[ -d "$parent" ]] || die "Installation parent is not a directory: $parent"
+            permissions=$(stat -c '%a:%u' -- "$parent") || die "Cannot verify installation parent: $parent"
+            mode=${permissions%:*}; owner=${permissions#*:}
+            if (( (8#$mode & 0022) != 0 && !((8#$mode & 01000) != 0 && owner == 0) )); then
+                die "Installation parent is group- or world-writable: $parent. Choose a private XDG_DATA_HOME under non-writable parents, or ask the directory owner to review its permissions. Shared directories were not changed."
+            fi
+        fi
+        [[ "$parent" != / ]] || break
+        parent=$(dirname -- "$parent")
+    done
+}
+check_installation_parents
+if [[ -e "$root/releases" || -L "$root/releases" ]]; then
+    [[ -d "$root/releases" && ! -L "$root/releases" && -O "$root/releases" ]] || die "Refusing an unsafe managed releases directory: $root/releases"
+fi
 for i in "${!destinations[@]}"; do
     destination="${destinations[i]}"
     if [[ -e "$destination" || -L "$destination" ]]; then
@@ -103,6 +127,7 @@ for i in "${!destinations[@]}"; do
 done
 
 mkdir -p -- "$data_home"
+check_installation_parents
 stage=$(mktemp -d "$data_home/.musicmachine-install.XXXXXXXX")
 trap 'rm -rf -- "$stage"' EXIT
 if [[ -z "$archive" ]]; then
@@ -135,6 +160,8 @@ tar -tvzf "$archive" > "$stage/details"
 if grep -q '^[^-d]' "$stage/details"; then die 'Archive contains unsupported links or special files.'; fi
 mkdir "$stage/app"
 tar -xzf "$archive" --no-same-owner --no-same-permissions -C "$stage/app"
+# Only the newly extracted, link-free payload is normalized recursively.
+chmod -R go-w -- "$stage/app"
 for file in MusicMachine.Desktop musicmachine.svg; do
     [[ -f "$stage/app/$file" ]] || die "Archive is missing $file"
 done
@@ -152,7 +179,11 @@ fi
 
 install -m 755 -- "${BASH_SOURCE[0]}" "$stage/installer.sh"
 mkdir -p -- "$root/releases" "$bin_home" "$(dirname "$desktop")" "$(dirname "$icon")"
-printf '%s\n' "$marker" > "$root/.installer-owned"
+# Repair older installer-owned entries, without chmod on any user/shared parent.
+chmod go-w -- "$root" "$root/releases"
+printf '%s\n' "$marker" > "$stage/.installer-owned"
+chmod 644 "$stage/.installer-owned"
+mv -Tf -- "$stage/.installer-owned" "$root/.installer-owned"
 version=$(mktemp -d "$root/releases/build.XXXXXXXX")
 mv -- "$stage/app" "$version/app"
 old=$(readlink "$root/current" 2>/dev/null || true)

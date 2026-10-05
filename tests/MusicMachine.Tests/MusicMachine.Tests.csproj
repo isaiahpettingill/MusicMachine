@@ -3,4 +3,5 @@
   <ItemGroup><PackageReference Include="Microsoft.NET.Test.Sdk"/><PackageReference Include="xunit"/><PackageReference Include="Avalonia.Headless"/><PackageReference Include="xunit.runner.visualstudio"><PrivateAssets>all</PrivateAssets></PackageReference></ItemGroup>
   <ItemGroup><ProjectReference Include="../../src/MusicMachine.Core/MusicMachine.Core.csproj"/><ProjectReference Include="../../src/MusicMachine.Audio/MusicMachine.Audio.csproj"/></ItemGroup>
   <ItemGroup><Using Include="Xunit"/></ItemGroup>
+  <ItemGroup><None Include="../../tools/install-linux.sh" Link="install-linux.sh" CopyToOutputDirectory="PreserveNewest"/></ItemGroup>
 <ItemGroup><ProjectReference Include="../../src/MusicMachine.App/MusicMachine.App.csproj"/></ItemGroup></Project>
