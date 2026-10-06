@@ -19,6 +19,7 @@ public sealed class InstrumentPanel : UserControl
     private readonly TextBlock _scope, _waveHint, _frameCount;
     private readonly WaveformDisplay _wave;
     private readonly EnvelopeDisplay _envelope;
+    private readonly WavetableOverview _tableOverview;
     private readonly StackPanel _body, _customTools, _tableTools;
     private readonly Control _shapeFields, _triangleFields, _pulseFields, _squareFields, _levelFields;
     private readonly Button _editPoints;
@@ -36,7 +37,7 @@ public sealed class InstrumentPanel : UserControl
     private int _editingFrame;
 
     public InstrumentPanel(Action<Action<Song>> change, Action preview,
-        Action exportInstrument, Action importInstrument)
+        Action exportInstrument, Action importInstrument, Action? saveInstrument = null, Action? sampleInstrument = null)
     {
         _change = change;
         Name = "InstrumentPanel";
@@ -93,7 +94,7 @@ public sealed class InstrumentPanel : UserControl
                     i.Wavetable = [source, ShapeSamples(Waveform.Square)];
             });
         };
-        _wave = new WaveformDisplay { Name = "WaveformEditor", Height = 112, Margin = new(0, 8, 0, 0) };
+        _wave = new WaveformDisplay { Name = "WaveformEditor", Height = 160, Margin = new(0, 8, 0, 0) };
         Accessible(_wave, "Waveform and shape editor", "Drag the right amplitude handle for height. Triangle: drag the peak. Square or pulse: drag the width, high and low handles. Custom and wavetable: draw points. Escape cancels; release makes one undo. Shapes are shown at phase zero.");
         _wave.DrawCompleted += ReplaceEditorSamples;
         _wave.ShapeCompleted += preview => Edit(i => CopyShape(preview, i));
@@ -131,6 +132,9 @@ public sealed class InstrumentPanel : UserControl
         _frameCount.Margin = new(8, 0, 0, 0);
         frameHeader.Children.Add(_frames); Grid.SetColumn(_frameCount, 1); frameHeader.Children.Add(_frameCount);
         _tableTools.Children.Add(frameHeader);
+        _tableOverview = new WavetableOverview();
+        _tableOverview.FrameSelected += frame => { _editingFrame = frame; _frames.SelectedIndex = frame; RefreshWave(); };
+        _tableTools.Children.Add(_tableOverview);
         var frameButtons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 5 };
         _addFrame = SmallIconButton(PackIconMaterialKind.Plus, () =>
         {
@@ -189,8 +193,9 @@ public sealed class InstrumentPanel : UserControl
         _tuningSection.Name = "TuningSection";
         oscillator.Children.Add(_tuningSection);
 
-        _envelope = new EnvelopeDisplay { Height = 55, Margin = new(0, 0, 0, 8) };
-        Accessible(_envelope, "Amplitude envelope graph", "Attack, decay, sustain and release shape the volume of each note.");
+        _envelope = new EnvelopeDisplay { Name = "AmplitudeEnvelope", Height = 88, Margin = new(0, 0, 0, 8) };
+        _envelope.Changed += envelope => Edit(i => i.Amplitude = envelope);
+        Accessible(_envelope, "Amplitude envelope graph", "Drag the handles to change attack, decay, sustain and release. Escape cancels a drag.");
         var envelopeSection = new StackPanel { Spacing = 0 };
         envelopeSection.Children.Add(_envelope);
         envelopeSection.Children.Add(NumberGrid(
@@ -222,7 +227,13 @@ public sealed class InstrumentPanel : UserControl
         _sectionLayout = new Grid { ColumnDefinitions = new("*"), RowDefinitions = new("Auto,Auto"), ColumnSpacing = 24 };
         _sectionLayout.Children.Add(_oscillatorSection); Grid.SetRow(_soundColumn, 1); _sectionLayout.Children.Add(_soundColumn);
         _body = new StackPanel { Spacing = 0 };
-        _body.Children.Add(nameAndActions); _body.Children.Add(_sectionLayout);
+        _body.Children.Add(nameAndActions);
+        var actions = new WrapPanel { Margin = new(0, 6, 0, 8) };
+        if (saveInstrument is not null) actions.Children.Add(Ui.IconButton(PackIconMaterialKind.ContentSave, saveInstrument, "Save to instrument history"));
+        actions.Children.Add(Ui.IconButton(PackIconMaterialKind.Export, exportInstrument, "Export instrument…"));
+        actions.Children.Add(Ui.IconButton(PackIconMaterialKind.Import, importInstrument, "Import instrument…"));
+        if (sampleInstrument is not null) actions.Children.Add(Ui.IconButton(PackIconMaterialKind.Waveform, sampleInstrument, "Create waveform from audio…"));
+        _body.Children.Add(actions); _body.Children.Add(_sectionLayout);
 
         _panel = new StackPanel { Margin = new(14, 12, 14, 16) };
         _panel.Children.Add(header); _panel.Children.Add(_body);
@@ -279,7 +290,7 @@ public sealed class InstrumentPanel : UserControl
     {
         var selected = instrumentId is null ? null : song.FindInstrument(instrumentId);
         // A selection change, undo or concurrent model edit cancels the uncommitted local gesture.
-        if (!ReferenceEquals(_instrument, selected)) _wave.CancelGesture();
+        if (!ReferenceEquals(_instrument, selected)) { _wave.CancelGesture(); _envelope.CancelGesture(); }
         var changedInstrument = _instrumentId != selected?.Id;
         if (changedInstrument) _editingFrame = 0;
         _instrument = selected; _instrumentId = selected?.Id;
@@ -379,6 +390,7 @@ public sealed class InstrumentPanel : UserControl
     {
         if (_instrument is null) return;
         _wave.Show(_instrument, _editingFrame);
+        _tableOverview.Show(_instrument, _editingFrame);
         _waveHint.Text = _instrument.Drum != DrumKind.None ? "DRUM OSCILLATOR" : _instrument.Waveform switch
         {
             Waveform.Triangle => "DRAG PEAK · RIGHT HANDLE = HEIGHT",
@@ -504,6 +516,82 @@ public sealed class InstrumentPanel : UserControl
     private sealed class EnvelopeDisplay : Control
     {
         private double _attack = 5, _decay = 120, _sustain = .55, _release = 90;
+        private Envelope? _before;
+        private IPointer? _pointer;
+        private Point _press;
+        private int _handle = 1;
+        private double _scale;
+        public event Action<Envelope>? Changed;
+        public EnvelopeDisplay() { Focusable = true; Cursor = new Cursor(StandardCursorType.Hand); }
+        private Envelope Snapshot() => new() { AttackMs = _attack, DecayMs = _decay, Sustain = _sustain, ReleaseMs = _release };
+        private Point[] Points()
+        {
+            var r = new Rect(Bounds.Size).Deflate(8);
+            var a = (12 + Math.Sqrt(_attack)); var d = (12 + Math.Sqrt(_decay));
+            var release = (12 + Math.Sqrt(_release));
+            var hold = (a + d + release) * .3; var total = a + d + hold + release;
+            var sustain = r.Bottom - _sustain * r.Height;
+            return [new(r.X, r.Bottom), new(r.X + r.Width * a / total, r.Y),
+                new(r.X + r.Width * (a + d) / total, sustain),
+                new(r.X + r.Width * (a + d + hold) / total, sustain), new(r.Right, r.Bottom)];
+        }
+        protected override void OnPointerPressed(PointerPressedEventArgs e)
+        {
+            base.OnPointerPressed(e);
+            if (_before is not null || !e.GetCurrentPoint(this).Properties.IsLeftButtonPressed) return;
+            var p = e.GetPosition(this); var points = Points();
+            double Distance(Point point) => Math.Sqrt(Math.Pow(point.X - p.X, 2) + Math.Pow(point.Y - p.Y, 2));
+            var nearest = Enumerable.Range(1, 3).OrderBy(i => Distance(points[i])).First();
+            if (Distance(points[nearest]) > 14) return;
+            _handle = nearest; _press = p; _before = Snapshot();
+            _scale = 1.3 * ((12 + Math.Sqrt(_attack)) + (12 + Math.Sqrt(_decay)) + (12 + Math.Sqrt(_release))) / Math.Max(1, Bounds.Width - 16);
+            Focus(); _pointer = e.Pointer; e.Pointer.Capture(this); e.Handled = true;
+        }
+        private void Drag(Point p)
+        {
+            if (_before is null) return;
+            var delta = (p.X - _press.X) * _scale;
+            double Time(double original, double shift) => Math.Clamp(Math.Pow(Math.Max(0, Math.Sqrt(original) + shift), 2), 0, 60000);
+            if (_handle == 1) _attack = Time(_before.AttackMs, delta);
+            if (_handle == 2) _decay = Time(_before.DecayMs, delta);
+            if (_handle == 3) _release = Time(_before.ReleaseMs, -delta);
+            if (_handle > 1) _sustain = Math.Clamp(_before.Sustain - (p.Y - _press.Y) / Math.Max(1, Bounds.Height - 16), 0, 1);
+            InvalidateVisual();
+        }
+        protected override void OnPointerMoved(PointerEventArgs e)
+        { base.OnPointerMoved(e); if (_before is null || e.Pointer != _pointer) return; Drag(e.GetPosition(this)); e.Handled = true; }
+        protected override void OnPointerReleased(PointerReleasedEventArgs e)
+        {
+            base.OnPointerReleased(e); if (_before is null || e.Pointer != _pointer) return;
+            Drag(e.GetPosition(this)); var before = _before; var after = Snapshot();
+            _before = null; _pointer = null; e.Pointer.Capture(null); e.Handled = true;
+            if (before.AttackMs != after.AttackMs || before.DecayMs != after.DecayMs || before.Sustain != after.Sustain || before.ReleaseMs != after.ReleaseMs) Changed?.Invoke(after);
+        }
+        public void CancelGesture()
+        {
+            var before = _before; var pointer = _pointer; _before = null; _pointer = null;
+            if (before is not null) Show(before);
+            pointer?.Capture(null);
+        }
+        protected override void OnPointerCaptureLost(PointerCaptureLostEventArgs e) { base.OnPointerCaptureLost(e); CancelGesture(); }
+        protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e) { CancelGesture(); base.OnDetachedFromVisualTree(e); }
+        protected override void OnKeyDown(KeyEventArgs e)
+        {
+            base.OnKeyDown(e);
+            if (e.Key == Key.Escape) { CancelGesture(); e.Handled = true; return; }
+            if (_before is not null) return;
+            if (e.Key is Key.Left or Key.Right) { _handle = Math.Clamp(_handle + (e.Key == Key.Left ? -1 : 1), 1, 3); e.Handled = true; InvalidateVisual(); return; }
+            if (e.Key is not (Key.Up or Key.Down)) return;
+            var direction = e.Key == Key.Up ? 1 : -1;
+            if (_handle == 1) _attack = Math.Clamp(_attack + direction * 5, 0, 60000);
+            else if (e.KeyModifiers.HasFlag(KeyModifiers.Shift))
+            {
+                if (_handle == 2) _decay = Math.Clamp(_decay + direction * 5, 0, 60000);
+                else _release = Math.Clamp(_release + direction * 5, 0, 60000);
+            }
+            else _sustain = Math.Clamp(_sustain + direction * .01, 0, 1);
+            Changed?.Invoke(Snapshot()); InvalidateVisual(); e.Handled = true;
+        }
         public void Show(Envelope envelope)
         {
             _attack = envelope.AttackMs; _decay = envelope.DecayMs;
@@ -516,15 +604,7 @@ public sealed class InstrumentPanel : UserControl
             context.DrawRectangle(Ui.Surface, new Pen(Ui.Line), box, 5, 5);
             var r = box.Deflate(8);
             if (r.Width <= 0 || r.Height <= 0) return;
-            // A brief visual sustain plateau keeps the four stages legible at any time scale.
-            var a = Math.Max(12, Math.Sqrt(Math.Max(0, _attack)));
-            var d = Math.Max(12, Math.Sqrt(Math.Max(0, _decay)));
-            var release = Math.Max(12, Math.Sqrt(Math.Max(0, _release)));
-            var hold = (a + d + release) * .3; var total = a + d + hold + release;
-            var sustain = r.Bottom - Math.Clamp(_sustain, 0, 1) * r.Height;
-            Point[] points = [new(r.X, r.Bottom), new(r.X + r.Width * a / total, r.Y),
-                new(r.X + r.Width * (a + d) / total, sustain),
-                new(r.X + r.Width * (a + d + hold) / total, sustain), new(r.Right, r.Bottom)];
+            var points = Points();
             var fill = new StreamGeometry();
             using (var path = fill.Open())
             {
@@ -534,7 +614,7 @@ public sealed class InstrumentPanel : UserControl
             }
             context.DrawGeometry(Ui.Selection, null, fill);
             for (var n = 1; n < points.Length; n++) context.DrawLine(new Pen(Ui.Accent, 1.4), points[n - 1], points[n]);
-            for (var n = 1; n < points.Length - 1; n++) context.DrawEllipse(Ui.Accent, null, points[n], 2, 2);
+            for (var n = 1; n < points.Length - 1; n++) context.DrawEllipse(IsFocused && _handle == n ? Ui.Accent : Ui.Surface, new Pen(Ui.Accent, 1.5), points[n], 5, 5);
         }
     }
 }

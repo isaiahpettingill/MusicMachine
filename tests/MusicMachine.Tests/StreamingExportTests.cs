@@ -375,7 +375,7 @@ public sealed class StreamingExportTests
     private static string NewDirectory() => Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "musicmachine-stream-" + Guid.NewGuid().ToString("N"))).FullName;
     private static Song Tone()
     {
-        var song = DemoSong.CreateEmpty(); song.Bpm = 137; song.Patterns[0].Length = 3;
+        var song = TestSong.CreateEmpty(); song.Bpm = 137; song.Patterns[0].Length = 3;
         var part = song.Patterns[0].GetTrack(song.Tracks[0].Id); part.Rows[0] = new() { Kind = NoteKind.Note, Pitch = 69, Effects = ["A37", "V80"] };
         song.Instruments[0].Waveform = Waveform.Noise;
         return song;

@@ -29,7 +29,7 @@ internal static class ArrangementIntegrationChecks
             EditorPlatform.SavePreferences = _ => { }; EditorPlatform.ProjectStorage = null; AudioServices.CreatePlayer = () => player;
             view = new MainView();
             var editor = Field<SongEditor>(view, "editor"); var tracker = Field<TrackerGrid>(view, "tracker");
-            var seed = DemoSong.CreateEmpty(); var intro = seed.Patterns[0]; intro.Name = "Intro";
+            var seed = TestSong.CreateEmpty(); var intro = seed.Patterns[0]; intro.Name = "Intro";
             var verse = new Pattern { Name = "Verse", Length = 16 };
             foreach (var track in seed.Tracks) verse.GetTrack(track.Id);
             verse.Tracks[0].Rows[0] = new() { Kind = NoteKind.Note, Pitch = 67 };
@@ -131,7 +131,7 @@ internal static class ArrangementIntegrationChecks
 
             // Model validation rejects an overlong arrangement transactionally and
             // neither claims an append nor jumps selection on failure.
-            var large = DemoSong.CreateEmpty(); large.Patterns[0].Length = 1000;
+            var large = TestSong.CreateEmpty(); large.Patterns[0].Length = 1000;
             foreach (var track in large.Patterns[0].Tracks) while (track.Rows.Count < 1000) track.Rows.Add(new());
             foreach (var lane in large.Patterns[0].Drums) while (lane.Steps.Count < 1000) lane.Steps.Add(0);
             var repeatRows = 1000 * 125;

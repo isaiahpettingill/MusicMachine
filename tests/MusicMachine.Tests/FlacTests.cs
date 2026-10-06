@@ -107,7 +107,7 @@ public sealed class FlacTests
 
     [Fact] public async Task StreamingSongAndCooperativeExportsMatchSynchronousPcmIncludingTail()
     {
-        var song = DemoSong.CreateEmpty();
+        var song = TestSong.CreateEmpty();
         song.Patterns[0].GetTrack(song.Tracks[0].Id).Rows[0] = new() { Kind = NoteKind.Note, Pitch = 69 };
         string directory = NewDirectory();
         try

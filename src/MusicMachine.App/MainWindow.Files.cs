@@ -49,6 +49,12 @@ public sealed partial class MainView
             filePath = destination;
             if (editor.Revision == revision) { editor.MarkSaved(); await ClearRecoveryAsync(); }
             var notice = await RememberCurrentProjectAsync(snapshot, destination);
+            try
+            {
+                foreach (var instrument in snapshot.Instruments) await new InstrumentHistory(projectStorage).SaveAsync(instrument);
+                await LoadInstrumentHistory();
+            }
+            catch (Exception e) { notice = "Instrument history: " + e.Message; }
             Refresh(); SetStatus("Saved " + (file?.Name ?? destination) + (notice is null ? "" : " · " + notice)); return true;
         }
         catch (Exception e) { SetStatus("Save failed: " + e.Message); return false; }
@@ -219,7 +225,10 @@ public sealed partial class MainView
         if (!tracker.CommitPending() || !CommitEditorFields()) return;
         try
         {
-            var ins = editor.Song.FindInstrument(selectedInstrument)!;
+            var ins = editor.Song.FindInstrument(selectedInstrument);
+            if (ins is null) { SetStatus("Create or select an instrument first"); return; }
+            await new InstrumentHistory(projectStorage).SaveAsync(ins);
+            await LoadInstrumentHistory();
             var file = await StorageProvider.SaveFilePickerAsync(new() { Title = "Save instrument", SuggestedFileName = SafeName(ins.Name) + ".instrument", DefaultExtension = "instrument", FileTypeChoices = [InstrumentType], ShowOverwritePrompt = true });
             if (file is null) return;
             if (!OperatingSystem.IsBrowser() && file.TryGetLocalPath() is { } path) InstrumentFile.Save(path, ins);
@@ -236,11 +245,11 @@ public sealed partial class MainView
             if (files.Count == 0) return;
             Instrument ins;
             if (!OperatingSystem.IsBrowser() && files[0].TryGetLocalPath() is { } path) ins = InstrumentFile.Load(path);
-            else { await using var stream = await files[0].OpenReadAsync(); ins = await InstrumentFile.ReadAsync(stream); } ins.Id = Guid.NewGuid().ToString("N"); Change(s => s.Instruments.Add(ins)); selectedInstrument = ins.Id; Refresh(); SetStatus("Imported a self-contained instrument copy");
+            else { await using var stream = await files[0].OpenReadAsync(); ins = await InstrumentFile.ReadAsync(stream); } ins.Id = Guid.NewGuid().ToString("N"); Change(s => AddAndAssignInstrument(s, ins)); OpenInstrument(ins.Id); SetStatus("Imported a self-contained instrument copy");
         }
         catch (Exception e) { SetStatus("Instrument import: " + e.Message); }
     }
-    private Task ShowHelp() => Ask("Make a loop", "1. Select a pattern and click a note cell. Type F, F#, F4 or F#4; Enter commits. Octave follows the nearest earlier note in that track, or 4. Arrows move; Delete clears; Esc cancels. Empty rows sustain. OFF releases; CUT stops. T / TT repeat held notes as eighth / sixteenth triplets; S swings.\n\n2. Press F2 for the FX reference. Search by name, change decimal parameters, or choose an example, then insert. A selected note cell keeps its pitch and adds or updates a same-row effect; a selected FX cell is replaced. Effects happen together, without an extra time slot. Ctrl+I hides the reference. Track → Insert instrument change adds a section header.\n\n3. Drums: click a step, right-click for an accent. Arrangement: append/reuse patterns, mix tracks, click or drag volume points; right-click deletes a point.\n\n4. Sampling: import WAV/QOA, select a region and find a stable cycle. Low-confidence audio can use a manual period. Shape and audition before applying an undoable custom waveform or wavetable frame. The full source recording is never saved in the song.\n\nSpace plays/stops. Ctrl+S saves; Ctrl+Shift+S saves as; Ctrl+O opens; Ctrl+Z undoes; Ctrl+Shift+Z redoes. F1 opens this guide. File → Open demo song opens Neon Orchard. Startup reopens your last saved project, or starts blank. Unsaved recovery is offered separately; New resets the next launch to blank.\n\nWAV/FLAC/QOA export the full arrangement. For smooth game loops, keep start/end levels and sustained notes compatible; loop markers are saved for your arrangement workflow.", "Got it");
+    private Task ShowHelp() => Ask("Make a loop", "1. Use Instrument → New instrument to create a sound. Save keeps it in your instrument history; Export writes an .instrument file. Select a pattern and click a note cell. Type F, F#, F4 or F#4; Enter commits. Octave follows the nearest earlier note in that track, or 4. Arrows move; Delete clears; Esc cancels. Empty rows sustain. OFF releases; CUT stops. T / TT repeat held notes as eighth / sixteenth triplets; S swings.\n\n2. Press F2 for the FX reference. Search by name, change decimal parameters, or choose an example, then insert. A selected note cell keeps its pitch and adds or updates a same-row effect; a selected FX cell is replaced. Effects happen together, without an extra time slot. Ctrl+I hides the reference. Track → Insert instrument change adds a section header.\n\n3. Drums: click a step, right-click for an accent. Arrangement: append/reuse patterns, mix tracks, click or drag volume points; right-click deletes a point.\n\n4. Sampling: import WAV/QOA, select a region and find a stable cycle. Low-confidence audio can use a manual period. Shape and audition before applying an undoable custom waveform or wavetable frame. The full source recording is never saved in the song.\n\nSpace plays/stops. Ctrl+S saves; Ctrl+Shift+S saves as; Ctrl+O opens; Ctrl+Z undoes; Ctrl+Shift+Z redoes. F1 opens this guide. File → Open demo song opens an example song. Startup reopens your last saved project, or starts blank. Unsaved recovery is offered separately; New resets the next launch to blank.\n\nWAV/FLAC/QOA export the full arrangement. For smooth game loops, keep start/end levels and sustained notes compatible; loop markers are saved for your arrangement workflow.", "Got it");
     private static string SafeName(string name) => string.Concat(name.Select(c => Path.GetInvalidFileNameChars().Contains(c) ? '_' : c));
     private static void AtomicWrite(string path, byte[] data)
     {

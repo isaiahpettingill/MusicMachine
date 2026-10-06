@@ -22,7 +22,7 @@ public sealed class EditorControlTests
         // Deterministic control-level tests complement the real desktop/browser GUI smoke tests.
         // No audio device, windowing server, or machine-specific installed font is required.
         AppBuilder.Configure<Application>().UseHeadless(new AvaloniaHeadlessPlatformOptions()).SetupWithoutStarting();
-        var editor = new SongEditor(DemoSong.CreateEmpty());
+        var editor = new SongEditor(TestSong.CreateEmpty());
         var patternId = editor.Song.Patterns[0].Id;
         var tracker = new TrackerGrid();
         tracker.SetSong(editor.Song, patternId);
@@ -121,6 +121,7 @@ public sealed class EditorControlTests
             EditorThemes.Apply(EditorThemes.Default);
         }
         WaveformEditorRegressionChecks.Run();
+        InstrumentAuditionUiChecks.Run();
         StartupUiRegressionChecks.Run();
         FxReferencePanelChecks.Run();
         FxReferenceIntegrationChecks.Run();

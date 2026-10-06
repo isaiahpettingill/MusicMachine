@@ -35,7 +35,7 @@ public sealed class SynthRenderer
         var beatFrames = FramesPerRow * rowsPerBeat;
         _masterGain = Db(Safe(snapshot.MasterVolumeDb, -1, -96, 12));
         var instruments = snapshot.Instruments.ToDictionary(i => i.Id, i => new Sound(i));
-        var fallback = new Sound(new Instrument());
+        var fallback = new Sound(new Instrument { OscillatorAmplitude = 0 });
         Sound Find(string? id) => id is not null && instruments.TryGetValue(id, out var sound) ? sound : fallback;
         var channels = new List<Channel>();
         var events = new List<ScheduledEvent>();

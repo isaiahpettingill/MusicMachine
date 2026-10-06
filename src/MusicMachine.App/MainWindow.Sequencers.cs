@@ -85,7 +85,8 @@ public sealed partial class MainView
 
     private void AddDrumLane()
     {
-        var instrument = editor.Song.FindInstrument(selectedInstrument)!;
+        var instrument = editor.Song.FindInstrument(selectedInstrument);
+        if (instrument is null) { SetStatus("Create an instrument before adding a drum lane"); return; }
         if (instrument.Drum == DrumKind.None) { SetStatus("Select a drum sound (◈) in the instrument library, then add a lane"); return; }
         var pid = activePattern; selectedDrumLane = editor.Song.FindPattern(pid)!.Drums.Count;
         Change(s => { var p = s.FindPattern(pid)!; p.Drums.Add(new() { Name = instrument.Name, InstrumentId = instrument.Id, Steps = Enumerable.Repeat((byte)0, p.Length).ToList() }); });

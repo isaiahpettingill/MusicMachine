@@ -29,7 +29,9 @@ public sealed partial class MainView
     {
         // Save/close shortcuts can run without a blur or file picker. Validate every
         // live numeric draft before taking a snapshot or deciding the song is clean.
-        foreach (var number in this.GetLogicalDescendants().OfType<EditorNumber>().Where(n => n.IsEnabled).ToArray())
+        foreach (var number in this.GetLogicalDescendants().OfType<EditorNumber>()
+            .Where(n => n.IsEffectivelyEnabled && n.ModelValue is not null
+                && n.GetLogicalAncestors().OfType<Control>().All(parent => parent.IsEnabled)).ToArray())
         {
             if (number.TryCommitDraft()) continue;
             number.Focus(); SetStatus("Finish the numeric value or press Escape to cancel before continuing"); return false;

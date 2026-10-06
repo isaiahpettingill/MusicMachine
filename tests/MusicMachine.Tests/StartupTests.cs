@@ -69,6 +69,8 @@ public sealed class StartupTests
     internal static void AssertBlank(Song song)
     {
         Assert.Equal("Untitled song", song.Title); Assert.Single(song.Patterns);
+        Assert.Empty(song.Instruments); Assert.Empty(song.Patterns[0].Drums);
+        Assert.All(song.Tracks, track => Assert.Empty(track.InstrumentId));
         Assert.All(song.Patterns.SelectMany(p => p.Tracks).SelectMany(t => t.Rows), note => { Assert.Equal(NoteKind.Empty, note.Kind); Assert.Empty(note.Effects); });
         Assert.All(song.Patterns.SelectMany(p => p.Drums).SelectMany(d => d.Steps), step => Assert.Equal(0, step));
         Assert.All(song.Tracks, track => Assert.Empty(track.VolumeAutomation));

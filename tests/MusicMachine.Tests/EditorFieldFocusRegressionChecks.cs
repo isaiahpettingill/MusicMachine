@@ -26,7 +26,28 @@ internal static class EditorFieldFocusRegressionChecks
             EditorPlatform.LoadPreferences = () => "workspace=Tracker\nlibrary=false\ninspector=true\ninspectorContent=instrument\ncheckForUpdates=false\n";
             EditorPlatform.SavePreferences = _ => { }; EditorPlatform.ProjectStorage = null;
             var view = new MainView(); window = new Window { Width = 1180, Height = 812, Content = view }; window.Show(); Pump(window);
+            Invoke(view, "AddInstrument"); Pump(window);
             var editor = Field<SongEditor>(view, "editor"); var tracker = Field<TrackerGrid>(view, "tracker");
+            // Envelope dragging previews locally, commits once on release, and supports undo/cancel.
+            var envelopeGraph = Named<Control>(view, "AmplitudeEnvelope");
+            envelopeGraph.BringIntoView(); Pump(window);
+            var envelopePoints = (Point[])envelopeGraph.GetType().GetMethod("Points", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(envelopeGraph, null)!;
+            var envelopePoint = envelopeGraph.TranslatePoint(envelopePoints[1], window)!.Value;
+            var originalAttack = editor.Song.Instruments[0].Amplitude.AttackMs;
+            var envelopeRevision = editor.Revision;
+            window.MouseDown(envelopePoint, MouseButton.Left);
+            window.MouseMove(envelopePoint + new Vector(45, 0)); Pump(window);
+            Assert.Equal(envelopeRevision, editor.Revision);
+            window.MouseUp(envelopePoint + new Vector(45, 0), MouseButton.Left); Pump(window);
+            Assert.Equal(envelopeRevision + 1, editor.Revision);
+            Assert.True(editor.Song.Instruments[0].Amplitude.AttackMs > originalAttack);
+            Invoke(view, "Undo"); Pump(window);
+            Assert.Equal(originalAttack, editor.Song.Instruments[0].Amplitude.AttackMs);
+            envelopeRevision = editor.Revision;
+            window.MouseDown(envelopePoint, MouseButton.Left); window.MouseMove(envelopePoint + new Vector(30, 0));
+            window.KeyPress(Key.Escape, RawInputModifiers.None, PhysicalKey.Escape, null);
+            window.MouseUp(envelopePoint + new Vector(30, 0), MouseButton.Left); Pump(window);
+            Assert.Equal(envelopeRevision, editor.Revision); Assert.Equal(originalAttack, editor.Song.Instruments[0].Amplitude.AttackMs);
             var instrument = Field<InstrumentPanel>(view, "instrumentPanel"); var workspace = Field<ContentControl>(view, "workArea").Content;
             var amplitude = Named<NumericUpDown>(view, "OscillatorAmplitude");
             var text = amplitude.GetVisualDescendants().OfType<TextBox>().Single(); text.Focus(); text.SelectAll();

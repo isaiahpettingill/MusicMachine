@@ -38,7 +38,6 @@ internal static class SongValidation
         Count(song.Tracks, SongLimits.MaxTracks, "Tracks"); Count(song.Patterns, SongLimits.MaxPatterns, "Patterns");
         Count(song.Arrangement, SongLimits.MaxSections, "Arrangement");
         Require(song.Patterns.Count > 0 && song.Arrangement.Count > 0, "A song needs a pattern and an arrangement section");
-        Require(song.Instruments.Count > 0, "A song needs at least one embedded instrument");
         var instruments = new HashSet<string>(StringComparer.Ordinal);
         foreach (var instrument in song.Instruments) { Validate(instrument); Require(instruments.Add(instrument.Id), "Duplicate instrument ID"); }
         var tracks = new HashSet<string>(StringComparer.Ordinal);
@@ -46,7 +45,7 @@ internal static class SongValidation
         {
             Require(track is not null, "Missing track");
             Id(track!.Id); Require(tracks.Add(track.Id), "Duplicate track ID"); Text(track.Name, 128, "Track name");
-            Require(instruments.Contains(track.InstrumentId), $"Unknown track instrument {track.InstrumentId}");
+            Require(track.InstrumentId == "" || instruments.Contains(track.InstrumentId), $"Unknown track instrument {track.InstrumentId}");
             Range(track.VolumeDb, -96, 12, "Track volume"); Range(track.Pan, -1, 1, "Track pan");
             Text(track.Color, 16, "Track color");
             Require(track.Color.Length == 7 && track.Color[0] == '#' && track.Color.AsSpan(1).IndexOfAnyExcept("0123456789abcdefABCDEF") < 0, "Track color must be #RRGGBB");

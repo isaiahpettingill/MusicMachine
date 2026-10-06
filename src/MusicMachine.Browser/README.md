@@ -1,7 +1,7 @@
 # Browser host
 
 This is the same Avalonia editor as the desktop application, hosted by
-`Avalonia.Browser` on .NET 11 WebAssembly. Deploy the contents of the published
+`Avalonia.Browser` on .NET 10 WebAssembly. Deploy the contents of the published
 `wwwroot` directory; its relative URLs support both a site root and a subdirectory
 ending in `/`. No server API or account is required.
 
@@ -59,7 +59,7 @@ addition to these bridge tests.
 - [Web Audio buffer playback](https://developer.mozilla.org/docs/Web/API/AudioBufferSourceNode/start)
 - [AudioContext resume](https://developer.mozilla.org/docs/Web/API/AudioContext/resume)
 
-The host is also checked against the actual installed .NET 11 runtime's
+The host is also checked against the actual installed .NET runtime's
 `dotnet.d.ts`; its `RuntimeAPI` defines `setModuleImports`, `getConfig`, and
 `runMain`. The WebAssembly build uses the managed runtime; desktop releases use
 NativeAOT.

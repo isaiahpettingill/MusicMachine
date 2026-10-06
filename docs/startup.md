@@ -1,6 +1,6 @@
 # Startup, last project, and recovery
 
-A first launch opens an empty pattern with no notes or drum steps. The instrument presets and track layout are ready for entry. **File → Open demo song** explicitly opens Neon Orchard as an unsaved example; saving that example makes it an ordinary named project.
+A first launch opens an empty pattern with no notes or drum steps. New songs have numbered tracks with no instruments assigned. Create instruments from the Instrument menu. Save instrument keeps a reusable copy in the local instrument history; Export also writes an .instrument file. **File → Open demo song** explicitly opens an example song as an unsaved example; saving that example makes it an ordinary named project.
 
 Startup priority is:
 

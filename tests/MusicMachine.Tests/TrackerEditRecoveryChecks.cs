@@ -12,7 +12,7 @@ internal static class TrackerEditRecoveryChecks
 {
     internal static void Run()
     {
-        var editor = new SongEditor(DemoSong.CreateEmpty());
+        var editor = new SongEditor(TestSong.CreateEmpty());
         var patternId = editor.Song.Patterns[0].Id;
         var tracker = new TrackerGrid();
         tracker.SetSong(editor.Song, patternId);
@@ -95,7 +95,7 @@ internal static class TrackerEditRecoveryChecks
                 window.MouseDown(point, MouseButton.Left); window.MouseUp(point, MouseButton.Left);
             }
             tracker.Select(2, 0, 1); Type("8"); KeyPress(Key.Enter);
-            Click(TrackerGrid.Gutter + 83, 2);
+            Click(TrackerGrid.Gutter + TrackerGrid.NoteWidth + 11, 2);
             Assert.Equal("8", tracker.EditText); Assert.NotNull(tracker.EditError); Assert.True(tracker.IsFocused);
             Click(TrackerGrid.Gutter + 25, 4);
             Assert.False(tracker.HasPendingEdit); Assert.Equal(4, tracker.SelectedRow); Assert.Equal(0, tracker.SelectedColumn);

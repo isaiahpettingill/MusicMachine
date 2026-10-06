@@ -27,6 +27,22 @@ internal static class PaneLayoutRegressionChecks
             Assert.True(splitter.IsVisible); Assert.InRange(panes.ColumnDefinitions[3].ActualWidth, 399, 401);
             Assert.Equal(GridResizeDirection.Columns, splitter.ResizeDirection);
             var tracker = Field<TrackerGrid>(view, "tracker"); var editor = Field<SongEditor>(view, "editor");
+            // The editor stays at the top of a tall viewport and retains compact columns.
+            Assert.Equal(Avalonia.Layout.VerticalAlignment.Top, tracker.VerticalAlignment);
+            Assert.Equal(Avalonia.Layout.HorizontalAlignment.Left, tracker.HorizontalAlignment);
+            Assert.Equal(TrackerGrid.Gutter + editor.Song.Tracks.Count * (TrackerGrid.NoteWidth + tracker.EffectColumns * TrackerGrid.EffectWidth), tracker.Width);
+            Assert.InRange(tracker.Bounds.Y, 0, 1);
+            Assert.Equal(SongLimits.MaxRows, Named<NumericUpDown>(view, "PatternRows").Maximum);
+            tracker.Select(31, 0);
+            tracker.RaiseEvent(new KeyEventArgs { RoutedEvent = InputElement.KeyDownEvent, Key = Key.Down }); Pump();
+            Assert.Equal(64, editor.Song.Patterns[0].Length); Assert.Equal(32, tracker.SelectedRow);
+            Assert.All(editor.Song.Patterns[0].Tracks, t => Assert.Equal(64, t.Rows.Count));
+            Invoke(view, "Undo"); Pump(); Assert.Equal(32, editor.Song.Patterns[0].Length);
+            Invoke(view, "ResizePattern", SongLimits.MaxRows); Pump();
+            tracker.Select(SongLimits.MaxRows - 1, 0);
+            tracker.RaiseEvent(new KeyEventArgs { RoutedEvent = InputElement.KeyDownEvent, Key = Key.Down }); Pump();
+            Assert.Equal(SongLimits.MaxRows, editor.Song.Patterns[0].Length); Assert.Equal(SongLimits.MaxRows - 1, tracker.SelectedRow);
+            Invoke(view, "Undo"); Pump();
             tracker.Select(2, 1); var before = SongFile.Write(editor.Song);
             splitter.Focus();
             splitter.RaiseEvent(new KeyEventArgs { RoutedEvent = InputElement.KeyDownEvent, Key = Key.Left }); window.UpdateLayout();

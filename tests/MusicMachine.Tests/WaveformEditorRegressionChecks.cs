@@ -13,7 +13,7 @@ internal static class WaveformEditorRegressionChecks
 {
     internal static void Run()
     {
-        var editor = new SongEditor(DemoSong.CreateEmpty()); var id = editor.Song.Instruments[0].Id;
+        var editor = new SongEditor(TestSong.CreateEmpty()); var id = editor.Song.Instruments[0].Id;
         Instrument Instrument() => editor.Song.FindInstrument(id)!;
         InstrumentPanel? panel = null;
         panel = new InstrumentPanel(change => { editor.Change(change); panel!.ShowInstrument(editor.Song, id); }, () => { }, () => { }, () => { });
@@ -99,6 +99,16 @@ internal static class WaveformEditorRegressionChecks
             // Frame drawing updates only the selected frame, keeps its existing resolution, and is one undo.
             editor.Change(s => { var i = s.FindInstrument(id)!; i.Waveform = Waveform.Wavetable; i.OscillatorAmplitude = .5;
                 i.Wavetable = [[1000, -1000, 1000, -1000], [2000, -2000, 2000, -2000, 2000, -2000, 2000, -2000]]; }); Show();
+            window.UpdateLayout();
+            var overview = Named<WavetableOverview>("WavetableOverview");
+            Assert.True(overview.IsVisible); Assert.True(overview.Bounds.Height >= 240);
+            overview.BringIntoView(); window.UpdateLayout(); Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            var overviewPoint = overview.TranslatePoint(new Point(12, 116 - 2000 / 32768d * 30), window)!.Value;
+            var overviewRevision = editor.Revision;
+            window.MouseDown(overviewPoint, MouseButton.Left); window.MouseUp(overviewPoint, MouseButton.Left);
+            Assert.Equal(1, Named<ComboBox>("WavetableFrameSelector").SelectedIndex);
+            Assert.Equal(overviewRevision, editor.Revision);
+            Named<WaveformDisplay>("WaveformEditor").BringIntoView(); window.UpdateLayout(); Avalonia.Threading.Dispatcher.UIThread.RunJobs();
             Named<ComboBox>("WavetableFrameSelector").SelectedIndex = 1;
             before = SongFile.Write(editor.Song); revision = editor.Revision;
             window.MouseDown(P(.1, .1), MouseButton.Left); window.MouseMove(P(.8, -.2));

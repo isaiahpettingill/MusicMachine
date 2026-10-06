@@ -94,7 +94,7 @@ internal static class StartupUiRegressionChecks
 
             // A demo is available only by explicit request and remains an unsaved document.
             var previousTarget = operationStore.Data["last-project"].ToArray(); Pump(Call(operations, "LoadDemo"));
-            Assert.Equal("Neon Orchard", Editor(operations).Song.Title); Assert.True(Editor(operations).IsDirty); Assert.Equal(previousTarget, operationStore.Data["last-project"]);
+            Assert.Equal("Demo song", Editor(operations).Song.Title); Assert.True(Editor(operations).IsDirty); Assert.Equal(previousTarget, operationStore.Data["last-project"]);
 
             // An in-flight autosave cannot resurrect a recovery entry after New deletes it.
             var racingStore = new MemoryProjectStorage(true); var racing = View(racingStore); Editor(racing).Change(s => s.Title = "Race");
@@ -117,9 +117,27 @@ internal static class StartupUiRegressionChecks
             Set(updating, "updateRestartApproved", true); Assert.True(updating.RequestCloseAsync().GetAwaiter().GetResult()); Assert.Equal(updateBytes, updateStore.Data["song"]);
 
             // The real update-resume path wins over both an explicit path and the last project, including dirty state/workspace.
+            // Instruments are saved locally and reusable in a fresh song without changing the saved copy.
+            var historyStore = new MemoryProjectStorage(true); var historyView = View(historyStore);
+            typeof(MainView).GetMethod("AddInstrument", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(historyView, null);
+            var created = Assert.Single(Editor(historyView).Song.Instruments);
+            Assert.Equal(created.Id, Editor(historyView).Song.Tracks[0].InstrumentId);
+            Assert.True(Field<Border>(historyView, "inspectorPane").IsVisible);
+            Field<ComboBox>(historyView, "libraryPicker").SelectedIndex = 1;
+            var saveAction = historyView.GetLogicalDescendants().OfType<Button>().First(b => Avalonia.Automation.AutomationProperties.GetName(b) == "Save instrument to history");
+            Assert.IsType<IconPacks.Avalonia.Material.PackIconMaterial>(saveAction.Content);
+            Pump(Call(historyView, "SaveInstrument"));
+            var savedInstrument = Assert.Single(new InstrumentHistory(historyStore).LoadAsync().GetAwaiter().GetResult());
+            typeof(MainView).GetMethod("SetCurrentSong", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(historyView, [DemoSong.CreateEmpty(), null, false]);
+            Assert.Empty(Editor(historyView).Song.Instruments);
+            typeof(MainView).GetMethod("UseSavedInstrument", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(historyView, [savedInstrument]);
+            var reused = Assert.Single(Editor(historyView).Song.Instruments);
+            Assert.NotEqual(savedInstrument.Id, reused.Id); Assert.Equal(savedInstrument.Name, reused.Name);
+            Assert.Equal(reused.Id, Editor(historyView).Song.Tracks[0].InstrumentId);
+
             var work = Path.Combine(UpdateHost.DataDirectory, "install-test"); Directory.CreateDirectory(work);
             var resumedEditor = new SongEditor(StartupTests.Named("Resumed updater song")); resumedEditor.MarkUnsaved();
-            UpdateRecovery.Save(resumedEditor, null, resumedEditor.Song.Patterns[0].Id, resumedEditor.Song.Instruments[0].Id, "Sampling", work);
+            UpdateRecovery.Save(resumedEditor, null, resumedEditor.Song.Patterns[0].Id, resumedEditor.Song.Instruments.FirstOrDefault()?.Id ?? "", "Sampling", work);
             var plan = new UpdatePlan { Token = Guid.NewGuid().ToString("N"), Target = Path.TrimEndingDirectorySeparator(AppContext.BaseDirectory), Runtime = "linux-x64", Version = "0.2.0", PreviousVersion = "0.1.0", Commit = new string('a', 40), PreviousCommit = new string('b', 40), ParentProcess = Environment.ProcessId, ParentStartUtcTicks = DateTime.UtcNow.Ticks };
             var planPath = Path.Combine(work, "plan.json"); File.WriteAllText(planPath, JsonSerializer.Serialize(plan));
             UpdateHost.DesktopEnabled = true; UpdateHost.ResumePlan = planPath;
@@ -136,7 +154,7 @@ internal static class StartupUiRegressionChecks
     private static T Field<T>(MainView view, string name) => (T)typeof(MainView).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(view)!;
     private static void Set(MainView view, string name, object value) => typeof(MainView).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(view, value);
     private static Task Call(MainView view, string name, params object?[] args) => (Task)typeof(MainView).GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(view, args)!;
-    private static void Click(MainView view, string text) => view.GetLogicalDescendants().OfType<Button>().Single(b => Equals(b.Content, text)).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+    private static void Click(MainView view, string text) => (view.GetLogicalDescendants().OfType<Button>().SingleOrDefault(b => Equals(b.Content, text)) ?? throw new Exception("Missing " + text + ": " + Field<TextBlock>(view, "status").Text)).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
     private static Avalonia.Controls.Controls OverlayChildren(this MainView view) => ((Grid)view.Content!).Children;
     private static void Pump(Task task)
     {

@@ -15,7 +15,7 @@ public sealed class WaveformShapeTests
     };
     private static Song Tone(Instrument instrument)
     {
-        var song = DemoSong.CreateEmpty(); song.Instruments = [instrument];
+        var song = TestSong.CreateEmpty(); song.Instruments = [instrument];
         song.Tracks[0].InstrumentId = instrument.Id;
         song.Tracks.RemoveRange(1, song.Tracks.Count - 1);
         song.Patterns[0].Tracks.RemoveAll(t => t.TrackId != song.Tracks[0].Id);

@@ -39,7 +39,7 @@ public sealed class FxCatalogTests
                 Assert.Equal(definition.Command, effect.Code);
                 Assert.Equal(example.Code, effect.ToString());
                 FxParser.Validate([example.Code]);
-                var song = DemoSong.CreateEmpty(); var before = new SynthRenderer(song);
+                var song = TestSong.CreateEmpty(); var before = new SynthRenderer(song);
                 song.Patterns[0].Tracks[0].Rows[0] = new NoteEvent { Kind = NoteKind.Note, Pitch = 60, Effects = [example.Code] };
                 SongFile.Validate(song);
                 var after = new SynthRenderer(song);
@@ -121,7 +121,7 @@ public sealed class FxCatalogTests
     [InlineData(NoteTiming.TripletSixteenth)]
     public void ZeroRowRetriggersLeaveTripletNoteTimingIntact(NoteTiming timing)
     {
-        var song = DemoSong.CreateEmpty();
+        var song = TestSong.CreateEmpty();
         var note = song.Patterns[0].Tracks[0].Rows[0];
         note.Kind = NoteKind.Note; note.Pitch = 60; note.Timing = timing;
         var expected = OfflineExporter.Render(song);
@@ -132,7 +132,7 @@ public sealed class FxCatalogTests
     [Fact]
     public void GateReleasesAnAlreadyHeldNoteAndKeepsItsEnvelopeTail()
     {
-        var song = DemoSong.CreateEmpty();
+        var song = TestSong.CreateEmpty();
         var instrument = song.FindInstrument(song.Tracks[0].InstrumentId)!;
         instrument.Waveform = Waveform.Sine;
         instrument.Amplitude = new Envelope { AttackMs = 0, DecayMs = 0, Sustain = 1, ReleaseMs = 80 };

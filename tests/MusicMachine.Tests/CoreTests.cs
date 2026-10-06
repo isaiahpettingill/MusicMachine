@@ -67,7 +67,7 @@ public class SongFileTests
     }
     [Fact] public void EveryTruncationFailsGracefully()
     {
-        var data = SongFile.Write(DemoSong.CreateEmpty());
+        var data = SongFile.Write(TestSong.CreateEmpty());
         foreach (var length in new[] { 0, 1, 2, 15, data.Length / 2, data.Length - 1 }) Assert.Throws<SongFormatException>(() => SongFile.Read(data[..length]));
         Assert.Throws<SongFormatException>(() => SongFile.Read([.. data, 0]));
         Assert.Throws<SongFormatException>(() => SongFile.Read(new byte[SongLimits.MaxFileBytes + 1]));
@@ -80,7 +80,7 @@ public class SongFileTests
     }
     [Fact] public void UnknownFutureFieldsAreSafelySkipped()
     {
-        var expected = DemoSong.CreateEmpty(); var data = SongFile.Write(expected); var r = new CborReader(data); var w = new CborWriter();
+        var expected = TestSong.CreateEmpty(); var data = SongFile.Write(expected); var r = new CborReader(data); var w = new CborWriter();
         var count = r.ReadStartMap()!.Value; w.WriteStartMap(count + 1);
         for (var i = 0; i < count; i++) { w.WriteEncodedValue(r.ReadEncodedValue().Span); w.WriteEncodedValue(r.ReadEncodedValue().Span); }
         r.ReadEndMap(); w.WriteInt32(99); w.WriteStartMap(1); w.WriteTextString("future"); w.WriteStartArray(2); w.WriteInt32(123); w.WriteTextString("ignored"); w.WriteEndArray(); w.WriteEndMap(); w.WriteEndMap();
@@ -101,7 +101,7 @@ public class SongFileTests
     }
     [Fact] public void NonFiniteNumbersAndMissingReferencesRejected()
     {
-        var song = DemoSong.CreateEmpty(); song.Bpm = double.NaN; Assert.Throws<SongFormatException>(() => SongFile.Write(song));
+        var song = TestSong.CreateEmpty(); song.Bpm = double.NaN; Assert.Throws<SongFormatException>(() => SongFile.Write(song));
         song.Bpm = 120; song.Tracks[0].InstrumentId = "missing"; Assert.Throws<SongFormatException>(() => SongFile.Write(song));
         song = DemoSong.Create(); song.Patterns[0].Tracks[0].Rows.RemoveAt(0); Assert.Throws<SongFormatException>(() => SongFile.Write(song));
         song = DemoSong.Create(); song.Arrangement[0].PatternId = "missing"; Assert.Throws<SongFormatException>(() => SongFile.Write(song));
@@ -115,7 +115,7 @@ public class SongFileTests
     }
     [Fact] public void FuzzedDocumentsNeverLeakParserImplementationExceptions()
     {
-        var source = SongFile.Write(DemoSong.CreateEmpty()); var random = new Random(4309);
+        var source = SongFile.Write(TestSong.CreateEmpty()); var random = new Random(4309);
         for (var trial = 0; trial < 500; trial++)
         {
             var bytes = source.ToArray();
@@ -126,7 +126,7 @@ public class SongFileTests
     }
     [Fact] public void GridDivisionsAndEmbeddedInstrumentRequirementAreExplicit()
     {
-        var song = DemoSong.CreateEmpty(); song.RowsPerBeat = 3;
+        var song = TestSong.CreateEmpty(); song.RowsPerBeat = 3;
         Assert.Throws<SongFormatException>(() => SongFile.Validate(song)); song.RowsPerBeat = 16; SongFile.Validate(song);
         song.Instruments.Clear(); Assert.Throws<SongFormatException>(() => SongFile.Validate(song));
     }
@@ -153,7 +153,7 @@ public class SongFileTests
     }
     [Fact] public void LegacyVersionOneWithoutDenominatorDefaultsToQuarterNoteMeter()
     {
-        var r = new CborReader(SongFile.Write(DemoSong.CreateEmpty())); var w = new CborWriter();
+        var r = new CborReader(SongFile.Write(TestSong.CreateEmpty())); var w = new CborWriter();
         var count = r.ReadStartMap()!.Value; w.WriteStartMap(count - 1);
         for (var index = 0; index < count; index++)
         {
@@ -165,7 +165,7 @@ public class SongFileTests
     [Theory][InlineData(0)][InlineData(1)][InlineData(3)][InlineData(32)]
     public void UnsupportedMeterDenominatorsAreRejected(int beatUnit)
     {
-        var song = DemoSong.CreateEmpty(); song.BeatUnit = beatUnit;
+        var song = TestSong.CreateEmpty(); song.BeatUnit = beatUnit;
         Assert.Throws<SongFormatException>(() => SongFile.Validate(song));
         Assert.Throws<SongFormatException>(() => SongFile.Read(RewriteSongRoot(18, w => w.WriteInt32(beatUnit))));
     }
@@ -181,11 +181,11 @@ public class SongFileTests
         Assert.True(song.Arrangement.Count > song.Patterns.Count); Assert.All(song.Patterns, p => Assert.True(p.Drums.Count >= 3));
         var seconds = song.Arrangement.Sum(s => song.FindPattern(s.PatternId)!.Length * s.Repeats) * 60d / song.Bpm / song.RowsPerBeat;
         Assert.InRange(seconds, 29, 31); Assert.Equal(SongFile.Write(song), SongFile.Write(DemoSong.Create()));
-        var empty = DemoSong.CreateEmpty(); Assert.All(empty.Patterns[0].Tracks.SelectMany(t => t.Rows), n => Assert.Equal(NoteKind.Empty, n.Kind));
+        var empty = TestSong.CreateEmpty(); Assert.All(empty.Patterns[0].Tracks.SelectMany(t => t.Rows), n => Assert.Equal(NoteKind.Empty, n.Kind));
     }
     private static byte[] RewriteSongRoot(int keyToReplace, Action<CborWriter> value)
     {
-        var r = new CborReader(SongFile.Write(DemoSong.CreateEmpty())); var w = new CborWriter(); var count = r.ReadStartMap()!.Value; w.WriteStartMap(count);
+        var r = new CborReader(SongFile.Write(TestSong.CreateEmpty())); var w = new CborWriter(); var count = r.ReadStartMap()!.Value; w.WriteStartMap(count);
         for (var i = 0; i < count; i++) { var key = r.ReadInt32(); w.WriteInt32(key); if (key == keyToReplace) { r.SkipValue(); value(w); } else w.WriteEncodedValue(r.ReadEncodedValue().Span); }
         r.ReadEndMap(); w.WriteEndMap(); return w.Encode();
     }
@@ -195,7 +195,7 @@ public class SongEditorTests
 {
     [Fact] public void SaveUndoRedoAndBranchTrackContentDirtyState()
     {
-        var e = new SongEditor(DemoSong.CreateEmpty()); Assert.False(e.IsDirty); Assert.False(e.Undo());
+        var e = new SongEditor(TestSong.CreateEmpty()); Assert.False(e.IsDirty); Assert.False(e.Undo());
         e.Change(s => s.Title = "First"); Assert.True(e.IsDirty); e.MarkSaved(); Assert.False(e.IsDirty);
         e.Change(s => s.Title = "Second"); Assert.True(e.IsDirty); Assert.True(e.Undo()); Assert.False(e.IsDirty); Assert.Equal("First", e.Song.Title);
         Assert.True(e.Redo()); Assert.True(e.IsDirty); Assert.True(e.Undo()); e.Change(s => s.Title = "Branch"); Assert.False(e.CanRedo); Assert.True(e.IsDirty);
@@ -203,13 +203,13 @@ public class SongEditorTests
     }
     [Fact] public void NoOpDoesNotIncreaseRevisionAndFailedEditIsAtomic()
     {
-        var e = new SongEditor(DemoSong.CreateEmpty()); var revision = e.Revision; e.Change(_ => { }); Assert.Equal(revision, e.Revision);
+        var e = new SongEditor(TestSong.CreateEmpty()); var revision = e.Revision; e.Change(_ => { }); Assert.Equal(revision, e.Revision);
         Assert.Throws<SongFormatException>(() => e.Change(s => { s.Title = "No"; s.Bpm = 0; })); Assert.Equal("Untitled song", e.Song.Title); Assert.Equal(revision, e.Revision);
         Assert.Throws<InvalidOperationException>(() => e.Change(s => { s.Title = "No"; throw new InvalidOperationException(); })); Assert.False(e.IsDirty);
     }
     [Fact] public void OriginalSongIsIndependentAndUndoReturnsToSavedBytes()
     {
-        var source = DemoSong.CreateEmpty(); var e = new SongEditor(source); source.Title = "External"; Assert.Equal("Untitled song", e.Song.Title);
+        var source = TestSong.CreateEmpty(); var e = new SongEditor(source); source.Title = "External"; Assert.Equal("Untitled song", e.Song.Title);
         e.Change(s => s.Instruments[0].Amplitude.AttackMs = 45); Assert.True(e.IsDirty); Assert.True(e.Undo()); Assert.False(e.IsDirty);
         e.Change(s => s.Title = "Third"); var serialized = SongFile.Write(e.Song); e.MarkSaved(); e.Change(s => s.Title = "Fourth"); e.Undo(); Assert.Equal(serialized, SongFile.Write(e.Song)); Assert.False(e.IsDirty);
     }
@@ -220,7 +220,7 @@ public class StreamReadTests
     [Fact] public async Task ReadsPartialNonSeekableSongWithoutOwningStream()
     {
         var bytes = SongFile.Write(DemoSong.Create()); using var stream = new TestReadStream(bytes, bytes.Length, false, 7);
-        var song = await SongFile.ReadAsync(stream); Assert.Equal("Neon Orchard", song.Title);
+        var song = await SongFile.ReadAsync(stream); Assert.Equal("Demo song", song.Title);
         Assert.Equal(bytes.Length, stream.BytesRead); Assert.False(stream.IsDisposed);
     }
     [Fact] public async Task ReadsInstrumentAndStartsAtCurrentPosition()
@@ -250,7 +250,7 @@ public class StreamReadTests
     {
         using var empty = new TestReadStream([], 0, false);
         await Assert.ThrowsAsync<SongFormatException>(() => SongFile.ReadAsync(empty));
-        var bytes = SongFile.Write(DemoSong.CreateEmpty()); using var truncated = new TestReadStream(bytes, bytes.Length - 1, false, 19);
+        var bytes = SongFile.Write(TestSong.CreateEmpty()); using var truncated = new TestReadStream(bytes, bytes.Length - 1, false, 19);
         await Assert.ThrowsAsync<SongFormatException>(() => SongFile.ReadAsync(truncated));
     }
     [Fact] public async Task CancellationIsHonoredWithoutReadingOrClosing()

@@ -40,7 +40,7 @@ public sealed partial class MainView
     private void SetCurrentSong(Song song, string? path, bool dirty = false)
     {
         Stop(); editor.Load(song); if (dirty) editor.MarkUnsaved();
-        filePath = path; activePattern = editor.Song.Patterns[0].Id; selectedInstrument = editor.Song.Instruments[0].Id; chosenTrack = 0;
+        filePath = path; activePattern = editor.Song.Patterns[0].Id; selectedInstrument = editor.Song.Instruments.FirstOrDefault()?.Id ?? ""; chosenTrack = 0;
         SynchronizeDrumSound(); Refresh();
     }
     private async Task<string?> RememberCurrentProjectAsync(Song? savedSong = null, string? savedPath = null)
@@ -144,7 +144,7 @@ public sealed partial class MainView
             await ClearRecoveryAsync(); sessionRecoveryKey = NewRecoveryKey();
             SetCurrentSong(DemoSong.Create(), null, dirty: true);
             // The demo is an explicit unsaved document; never make it the clean startup target.
-            await SaveRecoverySnapshotAsync(); SetStatus("Neon Orchard demo · use Save as to keep a copy");
+            await SaveRecoverySnapshotAsync(); SetStatus("Demo song · use Save as to keep a copy");
         }
         finally { projectChangeBusy = false; SetProjectInputEnabled(true); RestoreInputFocus(); }
     }

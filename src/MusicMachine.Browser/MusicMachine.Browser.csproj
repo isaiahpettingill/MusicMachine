@@ -1,10 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk.WebAssembly">
   <PropertyGroup>
-    <TargetFramework>net11.0-browser</TargetFramework>
+    <TargetFramework>net10.0-browser</TargetFramework>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <OverrideHtmlAssetPlaceholders>true</OverrideHtmlAssetPlaceholders>
     <!-- WebAssembly uses the managed runtime; NativeAOT is the desktop release target. -->
     <RunAOTCompilation>false</RunAOTCompilation>
+    <WasmBuildNative>true</WasmBuildNative>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Avalonia.Browser" />
@@ -17,15 +18,15 @@
   <ItemGroup>
     <StaticWebAssetFingerprintPattern Include="JS" Pattern="main.js" Expression="#[.{fingerprint}]!" />
   </ItemGroup>
-  <!-- Avalonia also contributes older net9 archives. Link one compatible pair. -->
-  <Target Name="SelectNet11GraphicsArchives" BeforeTargets="PrepareForBuild">
+  <!-- Link one graphics archive pair matching the .NET 10 Emscripten toolchain. -->
+  <Target Name="SelectGraphicsArchives" BeforeTargets="PrepareForBuild">
     <ItemGroup>
       <NativeFileReference Remove="@(NativeFileReference)"
         Condition="$([System.String]::Copy('%(NativeFileReference.Identity)').Contains('libSkiaSharp')) or $([System.String]::Copy('%(NativeFileReference.Identity)').Contains('libHarfBuzzSharp'))" />
-      <NativeFileReference Include="$(SkiaSharpStaticLibraryPath)/5.0.6/st,simd/*.a" />
-      <NativeFileReference Include="$(HarfBuzzSharpStaticLibraryPath)/5.0.6/st,simd/*.a" />
+      <NativeFileReference Include="$(SkiaSharpStaticLibraryPath)/3.1.56/st,simd/*.a" />
+      <NativeFileReference Include="$(HarfBuzzSharpStaticLibraryPath)/3.1.56/st,simd/*.a" />
     </ItemGroup>
-    <Error Condition="!Exists('$(SkiaSharpStaticLibraryPath)/5.0.6/st,simd/libSkiaSharp.a')" Text="The .NET 11 Skia WebAssembly archive was not found. Restore browser package dependencies." />
+    <Error Condition="!Exists('$(SkiaSharpStaticLibraryPath)/3.1.56/st,simd/libSkiaSharp.a')" Text="The Skia WebAssembly archive was not found. Restore browser package dependencies." />
   </Target>
   <!-- Optional converter is generated explicitly. Verify its accompanying
        source/relink bundle and notices rather than silently shipping old cores. -->

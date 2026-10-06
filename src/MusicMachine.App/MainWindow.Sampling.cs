@@ -87,10 +87,10 @@ public sealed partial class MainView
             if (editor.Song.Instruments.Count >= SongLimits.MaxInstruments) return "This song has reached its instrument limit.";
             var name = Path.GetFileNameWithoutExtension(sourceName); if (name.Length > 100) name = name[..100];
             var instrument = new Instrument { Name = name + " wave", Waveform = Waveform.Custom, CustomWave = (short[])wave.Clone(), VolumeDb = -14, IsLocal = true };
-            Change(s => s.Instruments.Add(instrument));
+            Change(s => AddAndAssignInstrument(s, instrument));
             if (editor.Song.FindInstrument(instrument.Id) is null) return "Could not create instrument. Check the status bar.";
             selectedInstrument = instrument.Id; Refresh(); SetStatus("Created a self-contained sampled waveform instrument · Undo to remove");
-            return "Created " + instrument.Name + ". The source recording is not saved with the song.";
+            return "Created " + instrument.Name + ".";
         }
         var selected = editor.Song.FindInstrument(id);
         if (selected is null) return "Select an instrument first.";
@@ -110,12 +110,8 @@ public sealed partial class MainView
     private void PreviewSampledWave(short[] wave)
     {
         var instrument = new Instrument { Name = "Sampling preview", Waveform = Waveform.Custom, CustomWave = wave, VolumeDb = -14 };
-        Stop(); var song = DemoSong.CreateEmpty(); song.Instruments = [instrument];
-        song.Tracks.RemoveRange(1, song.Tracks.Count - 1); song.Tracks[0].InstrumentId = instrument.Id;
-        var pattern = song.Patterns[0]; pattern.Length = 8; pattern.Drums.Clear(); pattern.Tracks.RemoveAll(t => t.TrackId != song.Tracks[0].Id);
-        pattern.GetTrack(song.Tracks[0].Id).Rows = Enumerable.Range(0, 8).Select(_ => new NoteEvent()).ToList();
-        pattern.Tracks[0].Rows[0] = new() { Kind = NoteKind.Note, Pitch = 60 }; pattern.Tracks[0].Rows[4] = new() { Kind = NoteKind.Off };
-        SongFile.Validate(song); player.Play(song); previewing = true; SetPlayingVisual(true); SetStatus("Auditioning extracted waveform at C4 · song unchanged");
+        Stop(); player.Play(InstrumentAudition.CreateSong(instrument));
+        previewing = true; SetPlayingVisual(true); SetStatus("Auditioning extracted waveform at C4 · song unchanged");
     }
 
     private async Task ConfigureSamplingFfmpeg()

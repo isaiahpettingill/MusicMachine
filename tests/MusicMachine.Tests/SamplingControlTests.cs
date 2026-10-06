@@ -19,7 +19,7 @@ internal static class SamplingControlTests
 {
     internal static void Run()
     {
-        var editor = new SongEditor(DemoSong.CreateEmpty()); var original = SongFile.Write(editor.Song);
+        var editor = new SongEditor(TestSong.CreateEmpty()); var original = SongFile.Write(editor.Song);
         var source = Enumerable.Range(0, 4800).Select(i => (float)(.6 * Math.Sin(2 * Math.PI * i / 128) + .12 * Math.Sin(4 * Math.PI * i / 128) + .1)).ToArray();
         var untouched = (float[])source.Clone(); int applies = 0, auditions = 0;
         var panel = new SamplingPanel(_ => Task.FromResult<SampleClip?>(null), (wave, name, mode) =>
@@ -36,9 +36,14 @@ internal static class SamplingControlTests
         T Named<T>(string name) where T : Control => panel.GetLogicalDescendants().OfType<T>().Single(c => c.Name == name);
         void Click(string name) => Named<Button>(name).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         Assert.False(Named<Button>("SamplingApply").IsEnabled);
+        Assert.False(Named<Expander>("SamplingManualControls").IsExpanded);
         foreach (var name in new[] { "SamplingImport", "SamplingDetect", "SamplingExtract", "SamplingCancel", "SamplingReset", "SamplingApply" })
         {
-            Assert.IsType<PackIconMaterial>(Named<Button>(name).Content);
+            if (name == "SamplingDetect") Assert.Equal("Find cycle", Named<Button>(name).Content);
+            else if (name == "SamplingImport") Assert.Equal("Choose audio…", Named<Button>(name).Content);
+            else if (name == "SamplingExtract") Assert.Equal("Extract manual cycle", Named<Button>(name).Content);
+            else if (name == "SamplingApply") Assert.Equal("Create instrument", Named<Button>(name).Content);
+            else Assert.IsType<PackIconMaterial>(Named<Button>(name).Content);
             Assert.False(string.IsNullOrWhiteSpace(AutomationProperties.GetName(Named<Button>(name))));
             Assert.NotNull(ToolTip.GetTip(Named<Button>(name)));
         }
@@ -57,7 +62,7 @@ internal static class SamplingControlTests
         var afterApply = SongFile.Write(editor.Song);
         Named<ComboBox>("SamplingApplyMode").SelectedIndex = 2;
         Assert.Equal("Append a frame to the selected wavetable", AutomationProperties.GetName(Named<Button>("SamplingApply")));
-        Assert.Equal(PackIconMaterialKind.LayersPlus, ((PackIconMaterial)Named<Button>("SamplingApply").Content!).Kind);
+        Assert.Equal("Add frame to selected instrument", Named<Button>("SamplingApply").Content);
         Click("SamplingApply");
         Assert.Equal(Waveform.Wavetable, editor.Song.Instruments[0].Waveform); Assert.Single(editor.Song.Instruments[0].Wavetable);
         Assert.True(editor.Undo()); Assert.Equal(afterApply, SongFile.Write(editor.Song));
@@ -82,6 +87,10 @@ internal static class SamplingControlTests
         var failure = new SamplingPanel(_ => Task.FromException<SampleClip?>(new InvalidDataException("Rejected test input")), (_, _, _) => "", _ => { }, () => { });
         failure.LoadClip(new SampleClip(source, 48000, 1, "retained.wav"));
         Assert.True(failure.ImportAsync().IsCompletedSuccessfully); Assert.True(failure.HasSource); Assert.False(failure.IsBusy);
+        var tiny = new SamplingPanel(_ => Task.FromResult<SampleClip?>(null), (_, _, _) => "", _ => { }, () => { });
+        tiny.LoadClip(new SampleClip(new float[] { 0, .5f, -.5f }, 48000, 1, "tiny.wav"));
+        tiny.GetLogicalDescendants().OfType<Button>().Single(b => b.Name == "SamplingExtract").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Assert.Equal(128, tiny.ExtractedWave.Length);
         Assert.Equal(untouched, source);
         // Repeated import clicks cannot start parallel decoders; a late result after Clear is ignored.
         int importCalls = 0;
@@ -120,6 +129,8 @@ internal static class SamplingControlTests
             window.MouseDown(new Point(30, 50), MouseButton.Left); window.MouseMove(new Point(250, 50));
             window.MouseUp(new Point(250, 50), MouseButton.Left); Assert.Equal(1, selections);
             Assert.InRange(selectedStart, 0, 4797); Assert.InRange(selectedEnd, selectedStart + 3, 4800);
+            canvas.Zoom(2); canvas.Fit();
+            Assert.Equal(1, selections); // Zooming never changes the selected region.
             // A backwards drag also normalizes to a nonempty ascending region.
             window.MouseDown(new Point(400, 50), MouseButton.Left); window.MouseMove(new Point(100, 50));
             window.MouseUp(new Point(100, 50), MouseButton.Left); Assert.Equal(2, selections); Assert.True(selectedStart < selectedEnd);

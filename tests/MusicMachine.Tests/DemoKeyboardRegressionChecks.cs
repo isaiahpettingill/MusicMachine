@@ -28,7 +28,7 @@ internal static class DemoKeyboardRegressionChecks
             Assert.False(Field<bool>(view, "projectChangeBusy")); Assert.False(editor.IsDirty);
             // The browser smoke refocuses this tracker region twice quickly. Avalonia
             // derives its own double-click count, even when CDP sends clickCount: 1.
-            var point = tracker.TranslatePoint(new Point(TrackerGrid.Gutter + 120,
+            var point = tracker.TranslatePoint(new Point(TrackerGrid.Gutter + TrackerGrid.NoteWidth + TrackerGrid.EffectWidth + 10,
                 TrackerGrid.HeaderHeight + TrackerGrid.RowHeight + 14), window)!.Value;
             for (var click = 0; click < 2; click++) { window.MouseDown(point, MouseButton.Left); window.MouseUp(point, MouseButton.Left); }
             Assert.Equal(2, tracker.SelectedColumn); Assert.True(tracker.HasPendingEdit);
@@ -40,10 +40,10 @@ internal static class DemoKeyboardRegressionChecks
             Dispatcher.UIThread.RunJobs();
             Assert.Single(((Grid)view.Content!).Children);
             Assert.False(Field<bool>(view, "projectChangeBusy"));
-            Assert.Equal("Neon Orchard", editor.Song.Title); Assert.True(editor.IsDirty);
+            Assert.Equal("Demo song", editor.Song.Title); Assert.True(editor.IsDirty);
             var recovery = Assert.Single(store.Data, item => item.Key.StartsWith("recovery-", StringComparison.Ordinal));
             var saved = SongFile.Read(recovery.Value);
-            Assert.Equal("Neon Orchard", saved.Title);
+            Assert.Equal("Demo song", saved.Title);
             Assert.Contains(saved.Patterns.SelectMany(p => p.Tracks).SelectMany(t => t.Rows), note => note.Kind == NoteKind.Note);
             Assert.NotEmpty(saved.Arrangement); Assert.False(store.Data.ContainsKey("last-project"));
             Assert.True(tracker.IsFocused);

@@ -19,12 +19,14 @@ public sealed partial class MainView : UserControl
     private readonly InstrumentPanel instrumentPanel;
     private readonly SamplingPanel samplingPanel;
     private readonly StackPanel library = new() { Spacing = 3 }, patternList = new() { Spacing = 3 };
-    private readonly ContentControl workArea = new();
+    private readonly ContentControl workArea = new() { HorizontalContentAlignment = HorizontalAlignment.Stretch, VerticalContentAlignment = VerticalAlignment.Stretch };
     private readonly Dictionary<string, Button> tabButtons = [];
     private readonly TextBlock status = Ui.Label("Ready · Space to play · Type a note to begin", 11, Ui.Muted);
     private readonly TextBlock transportPosition = Ui.Label("00:00.0", 18, Ui.Accent);
     private readonly TextBox titleBox = new() { Width = 205, Background = Brushes.Transparent, BorderThickness = new(0), FontWeight = FontWeight.SemiBold };
     private readonly TextBox cellEntry = new() { Width = 118, PlaceholderText = "F#4, OFF, CUT" };
+    private readonly ComboBox trackInstrumentPicker = new() { Name = "TrackInstrumentPicker", Width = 190 };
+    private bool syncingTrackInstrument;
     private readonly TextBlock selection = Ui.Label("", 11, Ui.Muted);
     private readonly Button playButton, undoButton, redoButton;
     private readonly NumericUpDown tempo, rows, beats, swing;
@@ -60,26 +62,39 @@ public sealed partial class MainView : UserControl
         projectStorage = EditorPlatform.ProjectStorage ?? new DesktopProjectStorage(data);
         projectStartup = new ProjectStartupService(projectStorage);
         LoadViewSettings(); EditorThemes.Apply(viewSettings.Theme);
-        instrumentPanel = new InstrumentPanel(Change, PreviewInstrument, () => _ = ExportInstrument(), () => _ = ImportInstrument());
+        instrumentPanel = new InstrumentPanel(Change, PreviewInstrument, () => _ = ExportInstrument(), () => _ = ImportInstrument(), () => _ = SaveInstrument(), OpenSampling);
         samplingPanel = new SamplingPanel(ImportSamplingAudio, ApplySampledWave, PreviewSampledWave, Stop);
         playButton = Ui.IconButton(PackIconMaterialKind.Play, TogglePlay, "Play / stop · Space");
         undoButton = Ui.Button("Undo", () => Undo(), "Undo · Ctrl+Z"); redoButton = Ui.Button("Redo", () => Redo(), "Redo · Ctrl+Shift+Z");
         tempo = Number(editor.Song.Bpm, 20, 400, 1, 76, v => Change(s => s.Bpm = v), "0");
         beats = Number(editor.Song.BeatsPerBar, 1, 16, 1, 45, v => Change(s => s.BeatsPerBar = (int)v), "0");
-        rows = Number(32, 4, 256, 4, 70, v => ResizePattern((int)v), "0");
+        rows = Number(32, 1, SongLimits.MaxRows, 16, 84, v => ResizePattern((int)v), "0");
         swing = Number(editor.Song.Swing * 100, 0, 75, 1, 62, v => Change(s => s.Swing = v / 100), "0");
         beatUnit = new ComboBox { ItemsSource = new[] { "2", "4", "8", "16" }, SelectedIndex = 1, Width = 60 };
         beatUnit.SelectionChanged += (_, _) => { if (!refreshing && beatUnit.SelectedIndex >= 0) Change(s => s.BeatUnit = 1 << (beatUnit.SelectedIndex + 1)); };
         gridResolution = new() { ItemsSource = new[] { "1/4", "1/8", "1/16", "1/32", "1/64" }, SelectedIndex = 2, Width = 84 };
         gridResolution.SelectionChanged += (_, _) => { if (!refreshing && gridResolution.SelectedIndex >= 0) ChangeGrid(1 << gridResolution.SelectedIndex); };
-        tracker.Change += Change; tracker.Status += SetStatus;
+        trackInstrumentPicker.SelectionChanged += (_, _) =>
+        {
+            if (refreshing || syncingTrackInstrument || trackInstrumentPicker.SelectedIndex <= 0) return;
+            var instrument = editor.Song.Instruments.ElementAtOrDefault(trackInstrumentPicker.SelectedIndex - 1);
+            if (instrument is not null) AssignTrackInstrument(instrument.Id);
+        };
+        tracker.Change += edit => Change(s =>
+        {
+            var track = s.Tracks.ElementAtOrDefault(tracker.SelectedTrack);
+            if (track is not null && string.IsNullOrEmpty(track.InstrumentId) && s.FindInstrument(selectedInstrument) is not null) track.InstrumentId = selectedInstrument;
+            edit(s);
+        }); tracker.Status += SetStatus;
         tracker.SelectionChanged += (r, t) => { chosenTrack = t; UpdateSelection(); };
-        tracker.InstrumentHeaderClicked += id => { selectedInstrument = id; Refresh(true); };
+        tracker.InstrumentHeaderClicked += OpenInstrument;
+        tracker.ExtendRequested += ResizePattern;
+        rows.Name = "PatternRows";
         tracker.TrackHeaderContextRequested += t => _ = TrackOptions(t);
         tracker.TrackHeaderClicked += t => { chosenTrack = t; selectedInstrument = editor.Song.Tracks[t].InstrumentId; Refresh(); SetStatus("Track selected · right-click its header to move or remove it"); };
         titleBox.LostFocus += (_, _) => { if (!refreshing && titleBox.Text is { } t && t != editor.Song.Title && !string.IsNullOrWhiteSpace(t)) Change(s => s.Title = t.Trim()); };
         titleBox.KeyDown += (_, e) => { if (e.Key == Key.Enter) { tracker.Focus(); e.Handled = true; } };
-        cellEntry.KeyDown += (_, e) => { if (e.Key == Key.Enter) { if (tracker.CommitText(cellEntry.Text ?? "")) { tracker.Select(tracker.SelectedRow + 1, tracker.SelectedTrack, tracker.SelectedColumn); UpdateSelection(); tracker.Focus(); } e.Handled = true; } };
+        cellEntry.KeyDown += (_, e) => { if (e.Key == Key.Enter) { if (tracker.CommitText(cellEntry.Text ?? "")) { var next = tracker.SelectedRow + 1; if (next >= editor.Song.FindPattern(activePattern)!.Length) ResizePattern(editor.Song.FindPattern(activePattern)!.Length + 32); tracker.Select(next, tracker.SelectedTrack, tracker.SelectedColumn); UpdateSelection(); tracker.Focus(); } e.Handled = true; } };
         OverlayRoot.Children.Add(BuildShell()); Content = OverlayRoot;
         KeyDown += GlobalKeyDown;
         // A number can commit on blur during another control's pointer press. Wait
@@ -109,6 +124,7 @@ public sealed partial class MainView : UserControl
         {
             if (initialized) return; initialized = true; Title = title; RestoreInputFocus();
             await InitializeProjectAsync(initialPath);
+            await LoadInstrumentHistory();
             StartUpdates();
         };
     }
@@ -130,8 +146,20 @@ public sealed partial class MainView : UserControl
             undoButton.IsEnabled = editor.CanUndo; redoButton.IsEnabled = editor.CanRedo;
             library.Children.Clear(); foreach (var instrument in song.Instruments)
             {
-                var button = Ui.Button(instrument.Name, () => { selectedInstrument = instrument.Id; Refresh(); }, $"{instrument.Name} · {instrument.Waveform} · {(instrument.IsLocal ? "independent local copy" : "song instrument")}");
+                var button = Ui.Button(instrument.Name, () => ChooseInstrument(instrument.Id), $"{instrument.Name} · {instrument.Waveform} · {(instrument.IsLocal ? "independent local copy" : "song instrument")}");
                 button.HorizontalAlignment = HorizontalAlignment.Stretch; button.HorizontalContentAlignment = HorizontalAlignment.Left; button.FontSize = 11; button.Padding = new(7, 6); if (instrument.Id == selectedInstrument) button.Classes.Add("selected"); library.Children.Add(button);
+            }
+            library.Children.Add(Ui.Row(
+                Ui.IconButton(PackIconMaterialKind.Plus, AddInstrument, "New instrument"),
+                Ui.IconButton(PackIconMaterialKind.ContentSave, () => _ = SaveInstrument(), "Save instrument to history"),
+                Ui.IconButton(PackIconMaterialKind.Export, () => _ = ExportInstrument(), "Export instrument…"),
+                Ui.IconButton(PackIconMaterialKind.Import, () => _ = ImportInstrument(), "Import instrument…")));
+            library.Children.Add(Ui.Button("Create from audio…", OpenSampling, "Import a sample and extract a waveform"));
+            if (instrumentHistory.Count > 0)
+            {
+                library.Children.Add(Ui.Heading("Saved instruments"));
+                foreach (var saved in instrumentHistory)
+                    library.Children.Add(Ui.Button(saved.Name, () => UseSavedInstrument(saved), "Add saved instrument to this song"));
             }
             patternList.Children.Clear(); foreach (var pattern in song.Patterns)
             {
@@ -174,6 +202,13 @@ public sealed partial class MainView : UserControl
     {
         var t = editor.Song.Tracks.ElementAtOrDefault(tracker.SelectedTrack); cellEntry.Text = tracker.CurrentText;
         selection.Text = $"{t?.Name ?? "Track"} · {tracker.SelectedRow + 1:00}";
+        syncingTrackInstrument = true;
+        try
+        {
+            trackInstrumentPicker.ItemsSource = new[] { "Choose instrument…" }.Concat(editor.Song.Instruments.Select(i => i.Name)).ToArray();
+            trackInstrumentPicker.SelectedIndex = editor.Song.Instruments.FindIndex(i => i.Id == t?.InstrumentId) + 1;
+        }
+        finally { syncingTrackInstrument = false; }
         var n = t is null ? null : editor.Song.FindPattern(activePattern)?.Tracks.FirstOrDefault(pt => pt.TrackId == t.Id)?.Rows.ElementAtOrDefault(tracker.SelectedRow);
         if (!string.IsNullOrWhiteSpace(n?.InstrumentId)) selection.Text += $" · {editor.Song.FindInstrument(n.InstrumentId)?.Name}";
     }
@@ -191,16 +226,18 @@ public sealed partial class MainView : UserControl
     private void TogglePlay()
     {
         if (player.IsPlaying) { Stop(); return; }
-        if (!tracker.CommitPending()) return;
+        if (!PreparePlayback()) return;
         try { previewing = false; playingPattern = null; player.Play(SongFile.Clone(editor.Song), loop: loopToggle.IsChecked == true); SetPlayingVisual(true); SetStatus("Playing song · edits stop playback safely"); }
         catch (Exception e) { SetStatus("Audio device: " + e.Message + " · offline WAV/QOA export remains available"); }
     }
     private void PlayPattern()
     {
+        if (!PreparePlayback()) return;
         try { Stop(); var s = SongFile.Clone(editor.Song); s.Arrangement = [new() { PatternId = activePattern }]; s.LoopStartSection = 0; s.LoopEndSection = 1; player.Play(s, loop: loopToggle.IsChecked == true); SetPlayingVisual(true); playingPattern = activePattern; previewing = false; SetStatus("Playing current pattern · F6"); } catch (Exception e) { SetStatus("Pattern playback: " + e.Message); }
     }
     private void PlayFromCursor()
     {
+        if (!PreparePlayback()) return;
         long startRow = tracker.SelectedRow; bool found = false;
         foreach (var section in editor.Song.Arrangement) { if (section.PatternId == activePattern) { found = true; break; } startRow += (long)editor.Song.FindPattern(section.PatternId)!.Length * section.Repeats; }
         if (!found) { SetStatus("Append this pattern to the arrangement, or use Play pattern"); return; }
@@ -224,7 +261,11 @@ public sealed partial class MainView : UserControl
     {
         try
         {
-            Stop(); var s = DemoSong.CreateEmpty(); var ins = InstrumentFile.Clone(editor.Song.FindInstrument(selectedInstrument)!); s.Instruments.Clear(); s.Instruments.Add(ins); s.Tracks[0].InstrumentId = ins.Id; var p = s.Patterns[0]; p.Length = 8; s.Tracks.RemoveRange(1, s.Tracks.Count - 1); p.Tracks.RemoveAll(t => t.TrackId != s.Tracks[0].Id); p.Tracks[0].Rows = Enumerable.Range(0, 8).Select(_ => new NoteEvent()).ToList(); var notes = p.GetTrack(s.Tracks[0].Id).Rows; notes[0] = new() { Kind = NoteKind.Note, Pitch = 60 }; notes[4] = new() { Kind = NoteKind.Off }; p.Drums.Clear(); SongFile.Validate(s); player.Play(s); previewing = true; SetPlayingVisual(true); SetStatus($"Previewing {ins.Name} · C4");
+            if (!tracker.CommitPending() || !CommitEditorFields()) return;
+            var instrument = editor.Song.FindInstrument(selectedInstrument);
+            if (instrument is null) { SetStatus("Create or select an instrument first"); return; }
+            Stop(); player.Play(InstrumentAudition.CreateSong(instrument));
+            previewing = true; SetPlayingVisual(true); SetStatus($"Previewing {instrument.Name} · C4");
         }
         catch (Exception e) { SetStatus("Preview: " + e.Message); }
     }
@@ -243,6 +284,7 @@ public sealed partial class MainView : UserControl
     }
     private void ResizePattern(int length)
     {
+        length = Math.Clamp(length, 1, SongLimits.MaxRows);
         var p = editor.Song.FindPattern(activePattern)!; if (p.Length == length) return;
         if (length < p.Length && (p.Tracks.Any(t => t.Rows.Skip(length).Any(n => n.Kind != NoteKind.Empty || n.InstrumentId is not null || n.Effects.Any(x => x.Length > 0))) || p.Drums.Any(d => d.Steps.Skip(length).Any(v => v > 0)))) { SetStatus("Shortening would remove notes. Clear the later rows first, or duplicate this pattern."); refreshing = true; rows.Value = p.Length; refreshing = false; return; }
         Change(s => { var target = s.FindPattern(activePattern)!; target.Length = length; foreach (var t in target.Tracks) { while (t.Rows.Count < length) t.Rows.Add(new()); if (t.Rows.Count > length) t.Rows.RemoveRange(length, t.Rows.Count - length); } foreach (var d in target.Drums) { while (d.Steps.Count < length) d.Steps.Add(0); if (d.Steps.Count > length) d.Steps.RemoveRange(length, d.Steps.Count - length); } });
@@ -257,11 +299,11 @@ public sealed partial class MainView : UserControl
             Change(s => { foreach (var p in s.Patterns) { p.Length /= factor; foreach (var t in p.Tracks) t.Rows = t.Rows.Where((_, i) => i % factor == 0).ToList(); foreach (var d in p.Drums) d.Steps = d.Steps.Where((_, i) => i % factor == 0).ToList(); } foreach (var t in s.Tracks) foreach (var a in t.VolumeAutomation) a.Row /= factor; s.RowsPerBeat = newRowsPerBeat; }); SetStatus("Grid coarsened; note onsets preserved. Row-relative FX follow the new row duration."); return;
         }
         var scale = newRowsPerBeat / old;
-        if (editor.Song.Patterns.Any(p => p.Length * scale > 256)) { SetStatus("This finer grid would exceed 256 rows. Split long patterns first."); refreshing = true; gridResolution.SelectedIndex = (int)Math.Log2(old); refreshing = false; return; }
+        if (editor.Song.Patterns.Any(p => p.Length * scale > SongLimits.MaxRows)) { SetStatus("This finer grid would exceed 1024 rows. Split long patterns first."); refreshing = true; gridResolution.SelectedIndex = (int)Math.Log2(old); refreshing = false; return; }
         Change(s => { foreach (var p in s.Patterns) { p.Length *= scale; foreach (var t in p.Tracks) { var prior = t.Rows.ToArray(); t.Rows = Enumerable.Range(0, p.Length).Select(i => i % scale == 0 && i / scale < prior.Length ? prior[i / scale] : new NoteEvent()).ToList(); } foreach (var d in p.Drums) { var prior = d.Steps.ToArray(); d.Steps = Enumerable.Range(0, p.Length).Select(i => i % scale == 0 && i / scale < prior.Length ? prior[i / scale] : (byte)0).ToList(); } } foreach (var t in s.Tracks) foreach (var a in t.VolumeAutomation) a.Row *= scale; s.RowsPerBeat = newRowsPerBeat; }); SetStatus("Grid refined; musical note positions preserved");
     }
-    private void AddInstrument() { var ins = new Instrument { Name = "New pulse", VolumeDb = -14 }; Change(s => s.Instruments.Add(ins)); selectedInstrument = ins.Id; Refresh(); }
-    private void MakeLocal() { var originalId = selectedInstrument; var ins = InstrumentFile.Clone(editor.Song.FindInstrument(originalId)!); ins.Id = Guid.NewGuid().ToString("N"); ins.Name += " local"; ins.IsLocal = true; Change(s => { s.Instruments.Add(ins); if (s.Tracks.Count > 0) { var t = s.Tracks[chosenTrack]; t.InstrumentId = ins.Id; foreach (var p in s.Patterns) foreach (var n in p.GetTrack(t.Id).Rows) if (n.InstrumentId == originalId) n.InstrumentId = ins.Id; } }); selectedInstrument = ins.Id; Refresh(); SetStatus("Independent local copy assigned to this track and its matching sound sections"); }
+    private void AddInstrument() { var ins = new Instrument { Name = $"Instrument {editor.Song.Instruments.Count + 1:00}" }; Change(s => AddAndAssignInstrument(s, ins)); OpenInstrument(ins.Id); }
+    private void MakeLocal() { if (editor.Song.FindInstrument(selectedInstrument) is null) return; var originalId = selectedInstrument; var ins = InstrumentFile.Clone(editor.Song.FindInstrument(originalId)!); ins.Id = Guid.NewGuid().ToString("N"); ins.Name += " local"; ins.IsLocal = true; Change(s => { s.Instruments.Add(ins); if (s.Tracks.Count > 0) { var t = s.Tracks[chosenTrack]; t.InstrumentId = ins.Id; foreach (var p in s.Patterns) foreach (var n in p.GetTrack(t.Id).Rows) if (n.InstrumentId == originalId) n.InstrumentId = ins.Id; } }); selectedInstrument = ins.Id; Refresh(); SetStatus("Independent local copy assigned to this track and its matching sound sections"); }
     private void AddTrack()
     {
         if (!tracker.CommitPending()) return;

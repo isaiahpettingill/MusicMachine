@@ -3,7 +3,7 @@ using MusicMachine.Core;
 
 namespace MusicMachine.App;
 
-/// <summary>Only editor-owned song data and startup metadata belong here, never Sampling source clips.</summary>
+/// <summary>Stores editor-owned songs, instruments and startup metadata, never Sampling source clips.</summary>
 public interface IProjectStorage
 {
     bool UsesProjectSnapshots { get; }
@@ -19,7 +19,7 @@ public sealed class DesktopProjectStorage(string directory) : IProjectStorage
     private string Location(string key)
     {
         if (key.Length == 0 || key.Any(c => !char.IsAsciiLetterOrDigit(c) && c != '-')) throw new ArgumentException("Invalid project storage key.");
-        return Path.Combine(directory, key == "song" ? "recovery.song" : key == "last-project" ? "last-project.txt" : key + ".song");
+        return Path.Combine(directory, key == "song" ? "recovery.song" : key == "last-project" ? "last-project.txt" : key + (key.StartsWith("instrument-", StringComparison.Ordinal) ? ".instrument" : ".song"));
     }
     public Task<byte[]?> ReadAsync(string key)
     {
@@ -42,7 +42,7 @@ public sealed class DesktopProjectStorage(string directory) : IProjectStorage
     }
     public Task DeleteAsync(string key) { File.Delete(Location(key)); return Task.CompletedTask; }
     public Task<string[]> ListAsync(string prefix) => Task.FromResult(Directory.Exists(directory)
-        ? Directory.EnumerateFiles(directory, "*.song").Select(Path.GetFileNameWithoutExtension).OfType<string>().Where(k => k.StartsWith(prefix, StringComparison.Ordinal)).ToArray() : []);
+        ? Directory.EnumerateFiles(directory, prefix.StartsWith("instrument-", StringComparison.Ordinal) ? "*.instrument" : "*.song").Select(Path.GetFileNameWithoutExtension).OfType<string>().Where(k => k.StartsWith(prefix, StringComparison.Ordinal)).ToArray() : []);
 }
 
 public sealed record StartupProject(Song Song, string? Path, string? Notice);

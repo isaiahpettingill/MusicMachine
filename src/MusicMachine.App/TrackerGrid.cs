@@ -6,7 +6,7 @@ using Avalonia.Media;
 using MusicMachine.Core;
 namespace MusicMachine.App;
 
-// A single virtual drawing surface keeps a 256-row, 32-track pattern light.
+// A single virtual drawing surface keeps large patterns light.
 // Text entry is buffered until commit, so typing never makes partial invalid edits.
 public sealed class TrackerGrid : Control
 {
@@ -21,17 +21,21 @@ public sealed class TrackerGrid : Control
     public int PlaybackRow { get; set; } = -1;
     public event Action<Action<Song>>? Change;
     public event Action<string>? Status;
+    public event Action<int>? ExtendRequested;
     public event Action? EditChanged;
     public event Action<int, int>? SelectionChanged;
     public event Action<int>? TrackHeaderClicked;
     public event Action<int>? TrackHeaderContextRequested;
     public event Action<string>? InstrumentHeaderClicked;
-    public const double RowHeight = 20, HeaderHeight = 34, Gutter = 40;
-    private double MinimumTrackWidth => 72 + EffectColumns * 38;
-    private double TrackWidth => Math.Max(MinimumTrackWidth, (Bounds.Width - Gutter) / Math.Max(1, song.Tracks.Count));
+    public const double RowHeight = 26, HeaderHeight = 46, Gutter = 48;
+    public const double NoteWidth = 88, EffectWidth = 56;
+    private double MinimumTrackWidth => NoteWidth + EffectColumns * EffectWidth;
+    private double TrackWidth => MinimumTrackWidth;
     public TrackerGrid()
     {
         Focusable = true; ClipToBounds = true;
+        HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left;
+        VerticalAlignment = Avalonia.Layout.VerticalAlignment.Top;
         Avalonia.Automation.AutomationProperties.SetName(this, "Pattern editor. Type notes, use arrows to navigate, Enter to commit, Escape to cancel, F2 for FX help, Delete to clear.");
     }
     public void SetSong(Song value, string patternId)
@@ -40,7 +44,7 @@ public sealed class TrackerGrid : Control
         row = Math.Clamp(row, 0, Math.Max(0, (pattern?.Length ?? 1) - 1));
         column = Math.Clamp(column, 0, Math.Max(0, song.Tracks.Count * (EffectColumns + 1) - 1));
         anchorRow = Math.Clamp(anchorRow, 0, Math.Max(0, (pattern?.Length ?? 1) - 1)); anchorColumn = Math.Clamp(anchorColumn, 0, Math.Max(0, song.Tracks.Count * (EffectColumns + 1) - 1));
-        Width = double.NaN; MinWidth = Gutter + song.Tracks.Count * MinimumTrackWidth;
+        Width = MinWidth = Gutter + song.Tracks.Count * MinimumTrackWidth;
         Height = HeaderHeight + (pattern?.Length ?? 0) * RowHeight;
         InvalidateVisual();
     }
@@ -50,7 +54,7 @@ public sealed class TrackerGrid : Control
         column = Math.Clamp(track * (EffectColumns + 1) + col, 0, Math.Max(0, song.Tracks.Count * (EffectColumns + 1) - 1));
         anchorRow = row; anchorColumn = column; ClearEdit(); SelectionChanged?.Invoke(row, SelectedTrack); InvalidateVisual();
     }
-    private double CellX(int col) => Gutter + col / (EffectColumns + 1) * TrackWidth + (col % (EffectColumns + 1) == 0 ? 0 : 72 + (col % (EffectColumns + 1) - 1) * 38);
+    private double CellX(int col) => Gutter + col / (EffectColumns + 1) * TrackWidth + (col % (EffectColumns + 1) == 0 ? 0 : NoteWidth + (col % (EffectColumns + 1) - 1) * EffectWidth);
     private NoteEvent? Current => pattern?.Tracks.FirstOrDefault(t => t.TrackId == song.Tracks.ElementAtOrDefault(SelectedTrack)?.Id)?.Rows.ElementAtOrDefault(row);
     public string CurrentText => SelectedColumn == 0 ? Current is null ? "" : NoteParser.Format(Current) : Current?.Effects.ElementAtOrDefault(SelectedColumn - 1) ?? "";
     public string EditText => edit ?? CurrentText;
@@ -118,7 +122,7 @@ public sealed class TrackerGrid : Control
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
         base.OnPointerPressed(e); if (pattern is null || song.Tracks.Count == 0) return;
-        var p = e.GetPosition(this); if (p.X < Gutter) return;
+        var p = e.GetPosition(this); if (p.X < Gutter || p.X >= Width) return;
         var t = Math.Clamp((int)((p.X - Gutter) / TrackWidth), 0, song.Tracks.Count - 1);
         if (p.Y < HeaderHeight)
         {
@@ -128,7 +132,7 @@ public sealed class TrackerGrid : Control
             return;
         }
         var inner = p.X - Gutter - t * TrackWidth;
-        var c = inner < 72 ? 0 : Math.Min(EffectColumns, 1 + (int)((inner - 72) / 38));
+        var c = inner < NoteWidth ? 0 : Math.Min(EffectColumns, 1 + (int)((inner - NoteWidth) / EffectWidth));
         var targetRow = Math.Clamp((int)((p.Y - HeaderHeight) / RowHeight), 0, pattern.Length - 1);
         // Clicking the active draft returns keyboard focus without appending or erasing it.
         if (edit is not null && targetRow == row && t == SelectedTrack && c == SelectedColumn)
@@ -178,7 +182,10 @@ public sealed class TrackerGrid : Control
     }
     private void Move(int r, int c)
     {
-        row = Math.Clamp(row + r, 0, (pattern?.Length ?? 1) - 1);
+        var nextRow = row + r;
+        if (r == 1 && pattern is not null && nextRow >= pattern.Length && pattern.Length < SongLimits.MaxRows)
+            ExtendRequested?.Invoke(Math.Min(SongLimits.MaxRows, pattern.Length + 32));
+        row = Math.Clamp(nextRow, 0, (pattern?.Length ?? 1) - 1);
         column = Math.Clamp(column + c, 0, Math.Max(0, song.Tracks.Count * (EffectColumns + 1) - 1));
         ClearEdit(); SelectionChanged?.Invoke(row, SelectedTrack); this.BringIntoView(new Rect(CellX(column), HeaderHeight + row * RowHeight, 90, RowHeight));
     }
@@ -238,7 +245,7 @@ public sealed class TrackerGrid : Control
         base.OnPointerMoved(e); var p = e.GetPosition(this); if (pattern is null || p.X < Gutter || p.Y < HeaderHeight) return;
         var t = (int)((p.X - Gutter) / TrackWidth); var r = (int)((p.Y - HeaderHeight) / RowHeight); if (t >= song.Tracks.Count || r >= pattern.Length) return;
         var inner = p.X - Gutter - t * TrackWidth;
-        var c = inner < 72 ? 0 : Math.Min(EffectColumns, 1 + (int)((inner - 72) / 38));
+        var c = inner < NoteWidth ? 0 : Math.Min(EffectColumns, 1 + (int)((inner - NoteWidth) / EffectWidth));
         if (r == row && t == SelectedTrack && c == SelectedColumn && EditError is not null)
         {
             ToolTip.SetTip(this, $"{EditError} · Correct the text and press Enter, or Esc to cancel{(c > 0 ? "; F2 opens FX help" : "")}");
@@ -255,21 +262,27 @@ public sealed class TrackerGrid : Control
         base.Render(ctx); ctx.FillRectangle(Ui.Background, new Rect(Bounds.Size)); if (pattern is null) return;
         var beat = Math.Max(.25, song.RowsPerBeat * 4.0 / song.BeatUnit); var bar = beat * song.BeatsPerBar;
         ctx.FillRectangle(Ui.Surface, new Rect(0, 0, Bounds.Width, HeaderHeight));
-        ctx.DrawText(Ui.Fmt("ROW", 9, Ui.Muted, true), new Point(8, 17));
+        ctx.DrawText(Ui.Fmt("ROW", 11, Ui.Muted, true), new Point(8, 27));
         for (int t = 0; t < song.Tracks.Count; t++)
         {
-            var track = song.Tracks[t]; var x = Gutter + t * TrackWidth; var color = Ui.ThemeBrush(track.Color);
+            var track = song.Tracks[t]; var x = Gutter + t * TrackWidth;
             ctx.FillRectangle(Ui.Line, new Rect(x, 0, TrackWidth - 1, 1));
-            ctx.DrawText(Ui.Fmt($"{t + 1:00}  {track.Name}", 11, t == SelectedTrack ? Ui.Accent : Ui.Muted), new Point(x + 8, 6));
-            ctx.DrawText(Ui.Fmt("NOTE", 8, Ui.Muted, true), new Point(x + 8, 22));
-            for (int c = 0; c < EffectColumns; c++) ctx.DrawText(Ui.Fmt($"FX {c + 1}", 8, Ui.Muted, true), new Point(x + 76 + c * 38, 22));
+            using var headerClip = ctx.PushClip(new Rect(x, 0, TrackWidth - 1, HeaderHeight));
+            ctx.DrawText(Ui.Fmt($"{t + 1:00}  {track.Name}", 13, t == SelectedTrack ? Ui.Accent : Ui.Text), new Point(x + 8, 5));
+            ctx.DrawText(Ui.Fmt("NOTE", 11, Ui.Muted, true), new Point(x + 8, 27));
+            for (int c = 0; c < EffectColumns; c++) ctx.DrawText(Ui.Fmt($"FX {c + 1}", 11, Ui.Muted, true), new Point(x + NoteWidth + 8 + c * EffectWidth, 27));
         }
         for (int r = 0; r < pattern.Length; r++)
         {
             var y = HeaderHeight + r * RowHeight;
-            if (r % beat == 0) ctx.FillRectangle(Ui.ThemeBrush(r % bar == 0 ? "#1C2B3D" : "#162230"), new Rect(0, y, Bounds.Width, RowHeight));
-            if (r == PlaybackRow) ctx.FillRectangle(Ui.ThemeBrush("#235449"), new Rect(0, y, Bounds.Width, RowHeight));
-            ctx.DrawText(Ui.Fmt($"{r + 1:00}", 11, r % beat == 0 ? Ui.Text : Ui.Muted, true), new Point(12, y + 3));
+            if (r % bar == 0) ctx.FillRectangle(Ui.Surface, new Rect(0, y, Bounds.Width, RowHeight));
+            if (r == row) ctx.FillRectangle(Ui.Selection, new Rect(0, y, Gutter, RowHeight));
+            if (r == PlaybackRow)
+            {
+                ctx.FillRectangle(Ui.Selection, new Rect(0, y, Bounds.Width, RowHeight));
+                ctx.FillRectangle(Ui.Success, new Rect(0, y, 4, RowHeight));
+            }
+            ctx.DrawText(Ui.Fmt($"{r + 1:00}", 13, r % beat == 0 ? Ui.Text : Ui.Muted, true), new Point(12, y + 5));
             ctx.DrawLine(new Pen(Ui.Line, .35), new Point(0, y + RowHeight), new Point(Bounds.Width, y + RowHeight));
             for (int t = 0; t < song.Tracks.Count; t++)
             {
@@ -280,13 +293,14 @@ public sealed class TrackerGrid : Control
                 {
                     var col = t * (EffectColumns + 1) + c; var cx = CellX(col); var selected = r >= Math.Min(row, anchorRow) && r <= Math.Max(row, anchorRow) && col >= Math.Min(column, anchorColumn) && col <= Math.Max(column, anchorColumn);
                     var activeEdit = r == row && col == column && edit is not null;
-                    if (selected) { ctx.FillRectangle(Ui.Selection, new Rect(cx + 1, y + 1, (c == 0 ? 71 : 37) - 2, RowHeight - 2)); ctx.DrawRectangle(new Pen(activeEdit && EditError is not null ? Ui.Error : Ui.Accent, activeEdit && EditError is not null ? 2 : 1), new Rect(cx + 1, y + 1, (c == 0 ? 71 : 37) - 2, RowHeight - 2)); }
+                    if (selected) { ctx.FillRectangle(Ui.Selection, new Rect(cx + 1, y + 1, (c == 0 ? NoteWidth : EffectWidth) - 3, RowHeight - 2)); ctx.DrawRectangle(new Pen(activeEdit && EditError is not null ? Ui.Error : Ui.Accent, activeEdit && EditError is not null ? 2 : 1), new Rect(cx + 1, y + 1, (c == 0 ? NoteWidth : EffectWidth) - 3, RowHeight - 2)); }
                     var text = c == 0 ? n is null || n.Kind == NoteKind.Empty ? "· · ·" : NoteParser.Format(n) : n?.Effects.ElementAtOrDefault(c - 1) ?? "";
                     if (activeEdit) text = edit + "▏";
                     var brush = activeEdit && EditError is not null ? Ui.Error : c > 0 ? Ui.Muted : n?.Kind is NoteKind.Off or NoteKind.Cut ? Ui.Muted : Ui.Text;
-                    ctx.DrawText(Ui.Fmt(text, 11, brush, true), new Point(cx + 8, y + (!string.IsNullOrEmpty(n?.InstrumentId) ? 9 : 3)));
+                    using var cellClip = ctx.PushClip(new Rect(cx + 2, y, (c == 0 ? NoteWidth : EffectWidth) - 4, RowHeight));
+                    ctx.DrawText(Ui.Fmt(text, 13, brush, true), new Point(cx + 8, y + (!string.IsNullOrEmpty(n?.InstrumentId) ? 10 : 5)));
                 }
-                if (!string.IsNullOrEmpty(n?.InstrumentId)) { ctx.FillRectangle(Ui.ThemeBrush("#47362A"), new Rect(x + 1, y, TrackWidth - 2, 8)); ctx.DrawText(Ui.Fmt(song.FindInstrument(n.InstrumentId)?.Name ?? "Instrument", 7, Ui.Muted), new Point(x + 7, y)); }
+                if (!string.IsNullOrEmpty(n?.InstrumentId)) { ctx.FillRectangle(Ui.ThemeBrush("#47362A"), new Rect(x + 1, y, TrackWidth - 2, 8)); ctx.DrawText(Ui.Fmt(song.FindInstrument(n.InstrumentId)?.Name ?? "Instrument", 9, Ui.Muted), new Point(x + 7, y)); }
             }
         }
     }

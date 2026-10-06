@@ -48,7 +48,7 @@ public sealed partial class MainView
     }
     private Control BuildShell()
     {
-        var root = new Grid { RowDefinitions = new("28,38,*,24") };
+        var root = new Grid { RowDefinitions = new("28,38,*,28") };
         var menuRow = new Grid { ColumnDefinitions = new("*,Auto"), Background = Ui.Background };
         menuRow.Children.Add(BuildMenus()); var project = Ui.Label(editor.Song.Title, 11, Ui.Muted); project.Name = "ProjectLabel"; projectLabel = project; project.Margin = new(12, 0); Grid.SetColumn(project, 1); menuRow.Children.Add(project); root.Children.Add(menuRow);
         var transport = new Grid { ColumnDefinitions = new("Auto,*,Auto"), Margin = new(8, 0) };
@@ -66,7 +66,7 @@ public sealed partial class MainView
         libraryScroll.Content = libraryPicker.SelectedIndex == 1 ? library : patternList; libraryPane = Ui.Panel(libraryBody, new Thickness(0)); panes.Children.Add(libraryPane);
         Grid.SetColumn(workArea, 1); panes.Children.Add(workArea);
         inspectorPane = Ui.Panel(BuildInspectorShell(), new Thickness(0)); inspectorPane.BorderThickness = new(1, 0, 0, 0); Grid.SetColumn(inspectorPane, 3); panes.Children.Add(inspectorPane); inspectorSplitter = BuildInspectorSplitter(); Grid.SetColumn(inspectorSplitter, 2); panes.Children.Add(inspectorSplitter); root.Children.Add(panes);
-        status.Margin = new(10, 0); status.TextTrimming = TextTrimming.CharacterEllipsis; Grid.SetRow(status, 3); root.Children.Add(status);
+        status.Margin = new(10, 2); status.TextTrimming = TextTrimming.CharacterEllipsis; Grid.SetRow(status, 3); root.Children.Add(status);
         UpdatePaneLayout(); return root;
     }
     private Menu BuildMenus()
@@ -86,9 +86,9 @@ public sealed partial class MainView
         var effects = Group("FX columns", new[] { 0, 1, 2, 4, 6 }.Select(n => Command(n == 0 ? "Hide FX" : n.ToString(), () => SetEffectColumns(n))).ToArray());
         fxReferenceMenu = Command("FX reference", ShowFxReference, "F2"); fxReferenceMenu.ToggleType = MenuItemToggleType.CheckBox;
         var view = Group("_View", libraryMenu, inspectorMenu, fxReferenceMenu, workspace, themes, effects);
-        var pattern = Group("_Pattern", Command("Add selected pattern to song", AddSelectedPatternToSong), Command("Open song arrangement", OpenSongArrangement), new Separator(), Command("New pattern", AddPattern), Command("Duplicate pattern", DuplicatePattern), Command("Rename pattern…", () => _ = EditText("Rename pattern", editor.Song.FindPattern(activePattern)!.Name, t => Change(s => s.FindPattern(activePattern)!.Name = t))), Command("Pattern length…", () => _ = EditText("Pattern rows (4–256)", editor.Song.FindPattern(activePattern)!.Length.ToString(), t => { if (int.TryParse(t, out var n)) ResizePattern(Math.Clamp(n, 4, 256)); })), new Separator(), Command("Four-on-the-floor drums", () => ApplyDrumPreset(false)), Command("Broken beat drums", () => ApplyDrumPreset(true)), Command("Clear drum steps", () => Change(s => { foreach (var lane in s.FindPattern(activePattern)!.Drums) lane.Steps = Enumerable.Repeat((byte)0, s.FindPattern(activePattern)!.Length).ToList(); })));
+        var pattern = Group("_Pattern", Command("Add selected pattern to song", AddSelectedPatternToSong), Command("Open song arrangement", OpenSongArrangement), new Separator(), Command("New pattern", AddPattern), Command("Duplicate pattern", DuplicatePattern), Command("Rename pattern…", () => _ = EditText("Rename pattern", editor.Song.FindPattern(activePattern)!.Name, t => Change(s => s.FindPattern(activePattern)!.Name = t))), Command("Pattern length…", () => _ = EditText("Pattern rows (1–1024)", editor.Song.FindPattern(activePattern)!.Length.ToString(), t => { if (int.TryParse(t, out var n)) ResizePattern(Math.Clamp(n, 1, SongLimits.MaxRows)); })), new Separator(), Command("Four-on-the-floor drums", () => ApplyDrumPreset(false)), Command("Broken beat drums", () => ApplyDrumPreset(true)), Command("Clear drum steps", () => Change(s => { foreach (var lane in s.FindPattern(activePattern)!.Drums) lane.Steps = Enumerable.Repeat((byte)0, s.FindPattern(activePattern)!.Length).ToList(); })));
         var track = Group("_Track", Command("Add note track column", AddTrack), Command("Add FX column", AddEffectColumn), Command("Move / remove selected track…", () => _ = TrackOptions(chosenTrack)), Command("Insert instrument change", SetInstrumentEvent));
-        var instrument = Group("_Instrument", Command("New instrument", AddInstrument), Command("Make local copy", MakeLocal), Command("Edit in center", () => SelectWorkspace("Instrument")), Command("Sample a waveform", () => SelectWorkspace("Sampling")), Command("Audition", PreviewInstrument));
+        var instrument = Group("_Instrument", Command("New instrument", AddInstrument), Command("Save instrument", () => _ = SaveInstrument()), Command("Export instrument…", () => _ = ExportInstrument()), Command("Make local copy", MakeLocal), Command("Edit in center", () => SelectWorkspace("Instrument")), Command("Sample a waveform", () => SelectWorkspace("Sampling")), Command("Audition", PreviewInstrument));
         if (!OperatingSystem.IsBrowser()) file.ItemsSource = ((Control[])file.ItemsSource!).Concat([new Separator(), Command("Configure FFmpeg…", () => _ = ConfigureSamplingFfmpeg())]).ToArray();
         var transport = Group("_Transport", Command("Play / stop", TogglePlay, "Space"), Command("Stop", Stop), Command("Play current pattern", PlayPattern, "F6"), Command("Play from cursor", PlayFromCursor, "F5"), Command("Toggle loop", () => { loopToggle.IsChecked = loopToggle.IsChecked != true; RefreshChrome(); }));
         return new Menu { ItemsSource = new Control[] { file, edit, view, pattern, track, instrument, transport, BuildHelpMenu(Command("Keyboard and workflow", () => _ = ShowHelp(), "F1")) }, FontSize = 12 };
@@ -165,6 +165,7 @@ public sealed partial class MainView
         foreach (var button in content.GetLogicalDescendants().OfType<Button>())
         {
             if (button.Name == "TrackerAddTrack") button.IsEnabled = editor.Song.Tracks.Count < SongLimits.MaxTracks;
+            else if (button.Name == "TrackerExtend") button.IsEnabled = editor.Song.FindPattern(activePattern)!.Length < SongLimits.MaxRows;
             else if (button.Name == "TrackerAddFx") button.IsEnabled = tracker.EffectColumns < FxParser.MaxColumns;
         }
     }
@@ -175,13 +176,20 @@ public sealed partial class MainView
         var commands = new WrapPanel { Orientation = Orientation.Horizontal, Margin = new(0, 0, 0, 6) };
         var addTrack = TrackerCommand("Add track", PackIconMaterialKind.Plus, AddTrack, "Add a new note/instrument track column", "TrackerAddTrack");
         addTrack.IsEnabled = editor.Song.Tracks.Count < SongLimits.MaxTracks;
-        var addFx = TrackerCommand("Add FX column", PackIconMaterialKind.Plus, AddEffectColumn, "Show one more simultaneous effect column per track; existing music is unchanged", "TrackerAddFx");
+        var addFx = TrackerCommand("Add FX to all tracks", PackIconMaterialKind.Plus, AddEffectColumn, "Show one more simultaneous effect column per track; existing music is unchanged", "TrackerAddFx");
         addFx.IsEnabled = tracker.EffectColumns < FxParser.MaxColumns;
+        Ui.Detach(rows);
+        commands.Children.Add(Ui.Row(Ui.Label("Rows", 12), rows));
+        var extend = TrackerCommand("Add 32 rows", PackIconMaterialKind.Plus, () => ResizePattern(editor.Song.FindPattern(activePattern)!.Length + 32), "Extend this pattern; Down or Enter at the last row also adds rows", "TrackerExtend");
+        extend.IsEnabled = editor.Song.FindPattern(activePattern)!.Length < SongLimits.MaxRows;
+        commands.Children.Add(extend);
         commands.Children.Add(addTrack); commands.Children.Add(addFx);
         commands.Children.Add(TrackerCommand("Add to song", PackIconMaterialKind.ArrowRight, AddSelectedPatternToSong, "Append this reusable pattern to the song arrangement", "TrackerAddToSong"));
         commands.Children.Add(TrackerCommand("Song arrangement", PackIconMaterialKind.FolderOpen, OpenSongArrangement, "Put patterns in order, repeat them, and play or export the whole song", "TrackerOpenSong"));
+        Ui.Detach(trackInstrumentPicker);
+        commands.Children.Add(Ui.Row(Ui.Label("Track instrument", 12), trackInstrumentPicker));
         body.Children.Add(commands);
-        var scroll = new ScrollViewer { Content = tracker, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        var scroll = new ScrollViewer { Content = tracker, HorizontalContentAlignment = HorizontalAlignment.Left, VerticalContentAlignment = VerticalAlignment.Top, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
         Grid.SetRow(scroll, 1); body.Children.Add(scroll); return body;
     }
     private Control BuildAutomationWorkspace()
